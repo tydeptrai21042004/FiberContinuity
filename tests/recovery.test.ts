@@ -60,3 +60,57 @@ describe("continuity flow", () => {
     await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/destructive restore|target/i);
   });
 });
+
+class RaceAfterPreflightAdapter extends DemoFiberAdapter {
+  private checkpoints = 0;
+
+  override async createRecoveryCheckpoint() {
+    this.checkpoints += 1;
+    const checkpoint = await super.createRecoveryCheckpoint();
+    // The first checkpoint belongs to backup creation. The second is the pre-mutation rollback capture.
+    if (this.checkpoints === 2) {
+      const changed = structuredClone(checkpoint.snapshot);
+      changed.payments.push({ id: "race-payment", status: "SUCCESS", amount: "1 CKB" });
+      return { ...checkpoint, snapshot: changed };
+    }
+    return checkpoint;
+  }
+}
+
+describe("recovery edge-case guards", () => {
+  it("enforces the password minimum in the core API, not only the UI", async () => {
+    const continuity = new FiberContinuity(new DemoFiberAdapter());
+    await expect(continuity.createBackup("short")).rejects.toThrow(/at least 12 characters/i);
+  });
+
+  it("rejects invalid stability settings", () => {
+    expect(() => new FiberContinuity(new DemoFiberAdapter(), { stableSamples: 1 })).toThrow(/at least two matching samples/i);
+    expect(() => new FiberContinuity(new DemoFiberAdapter(), { timeoutMs: 100, pollIntervalMs: 100 })).toThrow(/timeout/i);
+  });
+
+  it("aborts when the target changes between preflight and mutation", async () => {
+    const source = new RaceAfterPreflightAdapter();
+    const continuity = new FiberContinuity(source);
+    const archive = await continuity.createBackup("very-good-password");
+    source.simulateBrowserStateLoss();
+
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/target state changed after preflight/i);
+  });
+
+  it("demonstrates fail-closed reviewer scenarios", async () => {
+    const adapter = new DemoFiberAdapter();
+    const continuity = new FiberContinuity(adapter);
+    const archive = await continuity.createBackup("very-good-password");
+
+    adapter.applyFaultScenario("foreign-node");
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/target|blocked/i);
+
+    adapter.reset();
+    adapter.applyFaultScenario("network-mismatch");
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/network identity/i);
+
+    adapter.reset();
+    adapter.applyFaultScenario("stale-state");
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/review target|stale|blocked/i);
+  });
+});

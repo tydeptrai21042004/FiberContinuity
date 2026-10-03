@@ -1,5 +1,10 @@
 # FiberContinuity
 
+> **v0.3.0 reviewer-ready demo** — production-style recovery console, deterministic fail-closed scenario lab, target race protection, and machine-readable evidence export. The deployed demo remains intentionally adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
+
+Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
+
+
 **FiberContinuity** is a web-first reference implementation for safe browser-session backup, restore preflight, recovery stabilization, and post-restore verification for self-custodial Fiber applications.
 
 It deliberately does **not** invent a second channel-recovery protocol or manipulate undocumented Fiber database keys. The continuity engine treats the native Fiber backup as opaque and requires a reviewed adapter/native recovery hook for the actual runtime.

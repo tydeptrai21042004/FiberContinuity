@@ -16,6 +16,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function assertCreatePassword(password: string): void {
+  if (password.length < 12) {
+    throw new Error("Recovery password must be at least 12 characters.");
+  }
+}
+
+function normalizeStability(options: FiberContinuityOptions): RecoveryStabilityOptions {
+  const stability = { ...DEFAULT_STABILITY, ...options };
+  if (!Number.isFinite(stability.timeoutMs) || stability.timeoutMs < 250) {
+    throw new Error("Recovery stability timeout must be at least 250 ms.");
+  }
+  if (!Number.isFinite(stability.pollIntervalMs) || stability.pollIntervalMs < 10) {
+    throw new Error("Recovery stability poll interval must be at least 10 ms.");
+  }
+  if (!Number.isInteger(stability.stableSamples) || stability.stableSamples < 2) {
+    throw new Error("Recovery stability requires at least two matching samples.");
+  }
+  if (stability.pollIntervalMs >= stability.timeoutMs) {
+    throw new Error("Recovery stability poll interval must be shorter than the timeout.");
+  }
+  return stability;
+}
+
 function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): RestoreTargetAssessment {
   const visibleRecords = current.channels.length + current.payments.length + current.invoices.length;
 
@@ -32,7 +55,6 @@ function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): R
     return { status: "safe", reason: "Target keeps the source identity but has no visible recovery records." };
   }
 
-  
   if (visibleRecords > 0) {
     return {
       status: "blocked",
@@ -58,7 +80,7 @@ export class FiberContinuity {
   private readonly stability: RecoveryStabilityOptions;
 
   constructor(private readonly adapter: FiberAdapter, options: FiberContinuityOptions = {}) {
-    this.stability = { ...DEFAULT_STABILITY, ...options };
+    this.stability = normalizeStability(options);
   }
 
   inspect() {
@@ -80,6 +102,7 @@ export class FiberContinuity {
   }
 
   async createBackup(password: string): Promise<RecoveryArchive> {
+    assertCreatePassword(password);
     const checkpoint = await this.createConsistentCheckpoint();
     return createArchive(checkpoint.snapshot, checkpoint.nativeBackup, password);
   }
@@ -141,20 +164,46 @@ export class FiberContinuity {
     throw new Error("Recovery did not reach a stable observable state before the verification timeout.");
   }
 
+  /**
+   * Captures rollback bytes while proving the target did not change between preflight and mutation.
+   * This closes the common check-then-use race in browser/app recovery flows.
+   */
+  private async prepareRollback(expectedTarget: FiberSnapshot): Promise<Uint8Array | undefined> {
+    if (this.adapter.createRecoveryCheckpoint) {
+      const checkpoint = await this.adapter.createRecoveryCheckpoint();
+      if (comparableSnapshot(checkpoint.snapshot) !== comparableSnapshot(expectedTarget)) {
+        throw new Error("Restore aborted: target state changed after preflight. Run preflight again against the latest state.");
+      }
+      return checkpoint.nativeBackup;
+    }
+
+    const before = await this.adapter.inspect();
+    if (comparableSnapshot(before) !== comparableSnapshot(expectedTarget)) {
+      throw new Error("Restore aborted: target state changed after preflight. Run preflight again against the latest state.");
+    }
+
+    try {
+      const rollback = await this.adapter.exportNativeBackup();
+      const after = await this.adapter.inspect();
+      if (comparableSnapshot(before) !== comparableSnapshot(after)) {
+        throw new Error("Restore aborted: target state changed while the rollback checkpoint was being captured.");
+      }
+      return rollback;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Restore aborted:")) throw error;
+      // Some upstream adapters may not expose backup from an empty/recovery target.
+      // Restore can proceed, but without automatic rollback protection.
+      return undefined;
+    }
+  }
+
   async restore(archive: RecoveryArchive, password: string): Promise<RecoveryReport> {
     const decoded = await decryptArchive(archive, password);
     const target = await this.adapter.inspect();
     const preflight = await this.preflightDecoded(decoded.snapshot, target);
     this.assertPreflightSafe(preflight);
 
-    // Keep a best-effort rollback checkpoint in memory. It is used only when native restore/restart throws.
-    // A verification finding is reported to the caller and is not silently rolled back.
-    let rollback: Uint8Array | undefined;
-    try {
-      rollback = await this.adapter.exportNativeBackup();
-    } catch {
-      rollback = undefined;
-    }
+    const rollback = await this.prepareRollback(target);
 
     try {
       await this.adapter.restoreNativeBackup(decoded.nativeBackup);

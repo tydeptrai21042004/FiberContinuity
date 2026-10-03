@@ -3,7 +3,7 @@ import { decryptBytes, encryptBytes, sha256Hex } from "./crypto";
 import { base64ToBytes, bytesToBase64, text, utf8 } from "./encoding";
 
 const MAX_CIPHERTEXT_BYTES = 256 * 1024 * 1024;
-const MAX_ARCHIVE_JSON_BYTES = 350 * 1024 * 1024;
+export const MAX_ARCHIVE_JSON_BYTES = 350 * 1024 * 1024;
 
 function publicAad(manifest: BackupManifest): Uint8Array {
   // Build a fixed-order object so JSON property order from an imported file is irrelevant.

@@ -12,6 +12,8 @@ interface DemoState {
   invoices: FiberSnapshot["invoices"];
 }
 
+export type DemoFaultScenario = "state-loss" | "stale-state" | "foreign-node" | "network-mismatch";
+
 const INITIAL: DemoState = {
   fiberVersion: "0.9.1",
   network: "testnet",
@@ -68,15 +70,21 @@ export class DemoFiberAdapter implements FiberAdapter {
   }
 
   async restoreNativeBackup(data: Uint8Array): Promise<void> {
-    const parsed = JSON.parse(new TextDecoder().decode(data)) as DemoState;
-    if (!parsed.nodeId || !Array.isArray(parsed.channels) || !Array.isArray(parsed.payments) || !Array.isArray(parsed.invoices)) {
+    let parsed: DemoState;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(data)) as DemoState;
+    } catch {
+      throw new Error("Demo backup is not valid JSON.");
+    }
+    if (!parsed.nodeId || !parsed.networkIdentity || !parsed.fiberVersion ||
+        !Array.isArray(parsed.channels) || !Array.isArray(parsed.payments) || !Array.isArray(parsed.invoices)) {
       throw new Error("Demo backup is invalid.");
     }
     this.state = clone(parsed);
   }
 
   async restartAfterRestore(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 40));
   }
 
   async assessRestoreTarget(expected: FiberSnapshot, current: FiberSnapshot): Promise<RestoreTargetAssessment> {
@@ -95,18 +103,39 @@ export class DemoFiberAdapter implements FiberAdapter {
   }
 
   async waitForRecoveryStable(_expected: FiberSnapshot, _options: RecoveryStabilityOptions): Promise<FiberSnapshot> {
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 60));
     return this.inspect();
   }
 
+  applyFaultScenario(scenario: DemoFaultScenario): void {
+    switch (scenario) {
+      case "state-loss":
+        this.state = {
+          ...clone(INITIAL),
+          nodeId: "LOST",
+          channels: [],
+          payments: [],
+          invoices: []
+        };
+        return;
+      case "stale-state":
+        this.state = clone(INITIAL);
+        this.state.channels[0] = { ...this.state.channels[0], state: "CHANNEL_SHUTTING_DOWN", localBalance: "430 CKB" };
+        this.state.payments.push({ id: "pay-newer", status: "SUCCESS", amount: "2 CKB" });
+        return;
+      case "foreign-node":
+        this.state = clone(INITIAL);
+        this.state.nodeId = "03fc-foreign-live-node";
+        return;
+      case "network-mismatch":
+        this.state = clone(INITIAL);
+        this.state.networkIdentity = "ckb-testnet-another-genesis";
+        return;
+    }
+  }
+
   simulateBrowserStateLoss(): void {
-    this.state = {
-      ...clone(INITIAL),
-      nodeId: "LOST",
-      channels: [],
-      payments: [],
-      invoices: []
-    };
+    this.applyFaultScenario("state-loss");
   }
 
   reset(): void {
