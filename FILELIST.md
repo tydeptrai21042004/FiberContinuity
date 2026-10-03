@@ -3,6 +3,7 @@
 - `.env.example`
 - `.github/workflows/ci.yml`
 - `.gitignore`
+- `CHANGELOG.md`
 - `README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/CKBUILDER_SCOPE.md`
@@ -35,8 +36,10 @@
 - `src/main.tsx`
 - `src/styles.css`
 - `tests/archive.test.ts`
+- `tests/browser-config.test.ts`
 - `tests/compatibility.test.ts`
 - `tests/recovery.test.ts`
+- `tests/verify.test.ts`
 - `tsconfig.app.json`
 - `tsconfig.json`
 - `tsconfig.node.json`

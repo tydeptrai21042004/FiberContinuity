@@ -2,33 +2,36 @@
 
 ## Problem
 
-Fiber's browser runtime can make Fiber available to web applications, and Fiber itself has native backup/restore and migration work. The remaining product question is whether an application can give a user a safe, understandable continuity path when browser-local state is lost or software changes.
+Native backup/restore primitives alone do not give a browser user a safe continuity workflow. The application still has to answer: Was the archive authentic? Is this the correct network/version? Is the target safe to overwrite? Did the restored node stabilize? Which state was actually verified?
 
-## Proposed contribution
+## Contribution
 
-FiberContinuity is not a replacement for FNN recovery. It provides:
+FiberContinuity provides a small application/infrastructure layer around supported Fiber recovery primitives:
 
-- a reusable adapter boundary;
-- encrypted portable recovery packaging;
-- compatibility/network preflight;
-- deterministic before/after verification;
-- a reviewer-friendly recovery lab; and
-- evidence artifacts.
+- reusable adapter boundary;
+- private authenticated portable archive;
+- fail-closed compatibility/network preflight;
+- destructive-target protection;
+- recovery stabilization hook;
+- capability-aware before/after verification;
+- deterministic reviewer lab; and
+- portable evidence output.
+
+It does **not** replace FNN recovery or claim that application-level checks supersede Fiber's channel-safety semantics.
 
 ## Why the demo adapter exists
 
-Grant reviewers should be able to exercise the product without trusting a faucet, opening a real channel, or risking funds. The deterministic adapter validates the application state machine first.
+Reviewers can exercise the safety/state-machine behavior without a faucet, real keys, channels, or funds. That proves the wrapper logic, not the real upstream recovery claim.
 
-The actual ecosystem claim is not proven until an official Fiber testnet recovery path and at least one independent application integration are completed.
+## Strong next funding milestone
 
-## Funding milestone design
+A narrow milestone should optimize for reproducible evidence rather than feature count:
 
-A small first milestone should target **evidence**, not feature count:
+1. confirm one exact upstream recovery hook with Fiber maintainers;
+2. pin one stable Fiber release/commit;
+3. implement an explicit target-safety policy for that runtime;
+4. complete a real testnet backup → local-state loss → restore → reconnect/reconcile → verify cycle;
+5. retain redacted machine-readable evidence; and
+6. have one independent Fiber application reproduce the integration.
 
-1. confirm the upstream recovery hook with Fiber maintainers;
-2. support one pinned stable Fiber release;
-3. complete a real testnet backup/loss/restore cycle;
-4. publish retained evidence;
-5. have one external Fiber application reproduce the flow.
-
-That keeps the request aligned with the ecosystem's preference for narrowly scoped, verifiable infrastructure work.
+That produces a falsifiable ecosystem deliverable while keeping the project small.

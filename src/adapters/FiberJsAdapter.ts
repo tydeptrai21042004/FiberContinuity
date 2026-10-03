@@ -1,6 +1,7 @@
-import type { FiberAdapter } from "./FiberAdapter";
-import type { FiberSnapshot, NetworkName } from "../core/types";
+import type { FiberAdapter, RecoveryStabilityOptions } from "./FiberAdapter";
+import type { FiberSnapshot, NetworkName, RestoreTargetAssessment } from "../core/types";
 import { UnsupportedCapabilityError } from "../core/errors";
+import { comparableSnapshot } from "../core/verify";
 
 export interface FiberLike {
   invokeCommand(method: string, params: unknown[]): Promise<unknown>;
@@ -14,10 +15,16 @@ export interface NativeRecoveryHooks {
 
 export interface FiberJsAdapterOptions {
   fiber: FiberLike;
-  version?: string;
+  /** Must describe the actual running Fiber build. FiberContinuity never assumes a version. */
+  version: string;
   network: NetworkName;
+  /** Stable network/genesis identity supplied by the host integration. */
   networkIdentity: string;
   recovery?: NativeRecoveryHooks;
+  /** Strongly recommended for live restores; otherwise different-identity targets fail closed. */
+  assessRestoreTarget?: (expected: FiberSnapshot, current: FiberSnapshot) => Promise<RestoreTargetAssessment>;
+  /** Optional Fiber-aware reconnect/reconciliation readiness hook. */
+  waitForRecoveryStable?: (expected: FiberSnapshot, options: RecoveryStabilityOptions) => Promise<FiberSnapshot>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -28,7 +35,10 @@ const str = (value: unknown, fallback = "unknown") => typeof value === "string" 
 export class FiberJsAdapter implements FiberAdapter {
   readonly name = "fiber-js";
 
-  constructor(private readonly options: FiberJsAdapterOptions) {}
+  constructor(private readonly options: FiberJsAdapterOptions) {
+    if (!options.version.trim()) throw new Error("FiberJsAdapter requires the actual running Fiber version.");
+    if (!options.networkIdentity.trim()) throw new Error("FiberJsAdapter requires a stable network identity.");
+  }
 
   async inspect(): Promise<FiberSnapshot> {
     const [nodeRaw, channelsRaw] = await Promise.all([
@@ -43,10 +53,17 @@ export class FiberJsAdapter implements FiberAdapter {
     return {
       capturedAt: new Date().toISOString(),
       adapter: this.name,
-      fiberVersion: this.options.version ?? "0.9.1",
+      fiberVersion: this.options.version,
       network: this.options.network,
       networkIdentity: this.options.networkIdentity,
       nodeId: str(node.pubkey ?? node.node_id),
+      capabilities: {
+        // list_channels exposes identity/peer/state here. Balance field names are deliberately not guessed.
+        channels: "metadata",
+        // Payment/invoice history RPC schemas are deliberately not invented by this adapter.
+        payments: "unavailable",
+        invoices: "unavailable"
+      },
       channels: channelItems.map((raw, i) => {
         const ch = obj(raw);
         return {
@@ -55,8 +72,6 @@ export class FiberJsAdapter implements FiberAdapter {
           state: str(ch.state, "unknown")
         };
       }),
-      // Fiber RPC payment/invoice history shapes are intentionally not guessed here.
-      // Integrators can extend the adapter once their supported upstream RPC surface is fixed.
       payments: [],
       invoices: []
     };
@@ -82,5 +97,51 @@ export class FiberJsAdapter implements FiberAdapter {
 
   async restartAfterRestore(): Promise<void> {
     await this.options.recovery?.restartAfterRestore?.();
+  }
+
+  async assessRestoreTarget(expected: FiberSnapshot, current: FiberSnapshot): Promise<RestoreTargetAssessment> {
+    if (this.options.assessRestoreTarget) return this.options.assessRestoreTarget(expected, current);
+    if (expected.nodeId === current.nodeId) {
+      if (comparableSnapshot(expected) === comparableSnapshot(current)) {
+        return { status: "safe", reason: "Target already matches the authenticated backup snapshot." };
+      }
+      if (current.channels.length > 0) {
+        return { status: "review", reason: "Same-identity target has different live channel state. Supply an explicit target-safety hook before overwriting it." };
+      }
+      return {
+        status: "review",
+        reason: "Same-identity target differs from the backup and payment/invoice visibility is unavailable. Supply an explicit target-safety hook."
+      };
+    }
+    if (current.channels.length > 0) {
+      return { status: "blocked", reason: "Different target identity has visible channels; destructive restore is blocked." };
+    }
+    return {
+      status: "review",
+      reason: "Different target identity cannot be proven empty because payment/invoice history is unavailable. Supply assessRestoreTarget from the supported host integration."
+    };
+  }
+
+  async waitForRecoveryStable(expected: FiberSnapshot, options: RecoveryStabilityOptions): Promise<FiberSnapshot> {
+    if (this.options.waitForRecoveryStable) return this.options.waitForRecoveryStable(expected, options);
+    // Returning inspect() here would pretend reconnect/reconciliation readiness is known.
+    // Let FiberContinuity's generic stability polling run by not exposing this method? Since the
+    // interface is implemented on the class, perform conservative polling of observable channel metadata.
+    const deadline = Date.now() + options.timeoutMs;
+    let previous = "";
+    let stable = 0;
+    let latest = await this.inspect();
+    while (Date.now() <= deadline) {
+      const fingerprint = JSON.stringify({
+        nodeId: latest.nodeId,
+        channels: [...latest.channels].sort((a, b) => a.id.localeCompare(b.id))
+      });
+      stable = fingerprint === previous ? stable + 1 : 1;
+      if (stable >= options.stableSamples) return latest;
+      previous = fingerprint;
+      await new Promise((resolve) => setTimeout(resolve, options.pollIntervalMs));
+      latest = await this.inspect();
+    }
+    throw new Error("Fiber observable state did not stabilize before the recovery timeout.");
   }
 }

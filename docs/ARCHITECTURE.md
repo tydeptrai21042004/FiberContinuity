@@ -2,99 +2,135 @@
 
 ## Goal
 
-FiberContinuity solves one narrow problem: turn an official/native Fiber backup/restore primitive into a browser-facing **continuity workflow that can be verified**.
+FiberContinuity turns an official/native Fiber backup/restore primitive into a browser-facing continuity workflow with explicit safety gates and verifiable recovery evidence.
 
 ```text
-Web / PWA / extension
-        │
-        ▼
- FiberContinuity
-        │
- ┌──────┼──────────┐
- │      │          │
-Backup Restore   Verify
- │      │          │
- └──────┼──────────┘
-        ▼
-  FiberAdapter
-        │
-        ▼
-official Fiber/FNN integration
+Application UI
+    │
+    ▼
+FiberContinuity
+    │
+    ├─ consistent checkpoint
+    ├─ authenticated encrypted archive
+    ├─ fail-closed preflight
+    ├─ native restore / rollback-on-exception
+    ├─ restart + stabilization
+    └─ before/after verification
+    │
+    ▼
+FiberAdapter
+    │
+    ▼
+Pinned official/native Fiber integration
 ```
 
-## Core rule
+## Adapter boundary
 
-**Only the adapter knows how the supported Fiber runtime exposes backup/restore.**
+Only the adapter may define runtime-specific recovery behavior. Core code sees:
 
-The rest of the code only works with normalized snapshots and opaque native backup bytes.
+- a normalized `FiberSnapshot`;
+- opaque native backup bytes;
+- an optional atomic `createRecoveryCheckpoint()`;
+- an optional/required host-specific `assessRestoreTarget()` decision; and
+- an optional Fiber-aware `waitForRecoveryStable()` hook.
 
-That keeps upstream RPC/storage changes from leaking throughout the UI and makes it possible to support:
+This keeps undocumented database/storage assumptions out of the continuity engine.
 
-- browser `fiber-js`;
-- a remote Fiber provider;
-- a browser extension provider; or
-- another officially supported Fiber embedding
+## Archive format v2
 
-without rewriting the continuity engine.
-
-## Archive format
-
-The `.fcr.json` reference format has three top-level objects:
+A v2 archive has only two top-level fields:
 
 ```json
 {
   "manifest": {},
-  "ciphertext": "base64...",
-  "snapshot": {}
+  "ciphertext": "base64..."
 }
 ```
 
-The native backup is opaque to FiberContinuity. It is encrypted with AES-GCM using a PBKDF2-SHA256-derived key.
+The encrypted envelope contains:
 
-The manifest contains only non-secret metadata required for preflight:
+```text
+schemaVersion
+snapshot
+nativeBackup (base64)
+```
 
-- Fiber version;
-- network name and identity;
-- public node identity;
-- integrity digests; and
-- encryption parameters.
+This avoids publishing node IDs, channel IDs, balances, payment IDs, invoice IDs, and network identity in the archive header.
+
+The public manifest contains cryptographic parameters and a non-authenticating SHA-256 ciphertext corruption digest. AES-GCM authenticates the encrypted envelope, while the immutable public header fields used by the decryptor are included as AAD.
+
+## Backup consistency
+
+Preferred path:
+
+```text
+adapter.createRecoveryCheckpoint()
+       ├─ snapshot
+       └─ native bytes
+```
+
+Fallback path:
+
+```text
+inspect A → export native backup → inspect B
+```
+
+If observable state differs between A and B, backup creation aborts instead of packaging an obviously inconsistent snapshot/backup pair.
 
 ## Restore state machine
 
 ```text
 ARCHIVE LOADED
-     │
-     ▼
-INTEGRITY CHECK
-     │
-     ▼
-NETWORK CHECK ── mismatch ──> BLOCKED
-     │
-     ▼
-VERSION POLICY ─ blocked ───> BLOCKED
-     │
-     ▼
-DECRYPT
-     │
-     ▼
+      │
+      ▼
+STRUCTURE + CORRUPTION CHECK
+      │
+      ▼
+AUTHENTICATED DECRYPT
+      │
+      ▼
+NETWORK IDENTITY ─ mismatch ─────────> BLOCKED
+      │
+      ▼
+VERSION POLICY ─ review/blocked ─────> BLOCKED
+      │
+      ▼
+TARGET SAFETY ─ review/blocked ──────> BLOCKED
+      │
+      ▼
+BEST-EFFORT ROLLBACK CHECKPOINT
+      │
+      ▼
 NATIVE RESTORE
-     │
-     ▼
-RESTART/RECONNECT (adapter-specific)
-     │
-     ▼
+      │ exception
+      ├──────────────────────────────> ROLLBACK ATTEMPT
+      ▼
+RESTART / RECONNECT
+      │
+      ▼
+STABILIZATION / RECONCILIATION WAIT
+      │
+      ▼
 POST-RESTORE SNAPSHOT
-     │
-     ▼
-BEFORE/AFTER VERIFICATION
-     │
-     ├── hard mismatch ─────> UNSAFE
-     ├── soft mismatch ─────> DEGRADED
-     └── all checks pass ───> HEALTHY
+      │
+      ▼
+FIELD-AWARE VERIFICATION
+      │
+      ├─ hard mismatch ──────────────> UNSAFE
+      ├─ warning / unavailable ──────> DEGRADED
+      └─ all supported checks pass ─> HEALTHY
 ```
+
+## Capability-aware verification
+
+Every snapshot declares coverage for channels, payments, and invoices:
+
+- `full`: compare all normalized fields;
+- `metadata`: compare only fields the adapter deliberately exposes; or
+- `unavailable`: report `UNKNOWN` rather than manufacturing a PASS.
+
+For the deterministic demo all three record families are `full`. The current conservative `FiberJsAdapter` uses channel `metadata` and marks payment/invoice history `unavailable` until a pinned upstream integration exposes those records explicitly.
 
 ## Why no backend is required
 
-The v0.1 workflow is local-first. A server would increase the security surface without being needed for the core experiment. Vercel hosts only static application assets.
-
-Future cloud-backup integrations should store only client-side encrypted blobs and should be optional adapters, not a requirement for continuity.
+The reference workflow is local-first. Vercel hosts static assets only. A future cloud-backup provider should receive only client-side encrypted archives and remain an optional storage adapter rather than part of the recovery trust boundary.

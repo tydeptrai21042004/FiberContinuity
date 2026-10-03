@@ -1,22 +1,28 @@
 # How to verify
 
-This file is intended to make CKBuilder/Spark review reproducible.
-
-## A. Static checks
+## A. Automated checks
 
 ```bash
 npm install
+npm run check
 npm run build
-npm test
+npm run test:coverage
 ```
 
 Expected:
 
-- TypeScript build succeeds;
-- Vite outputs `dist/`;
-- compatibility tests pass;
-- archive encryption round-trip passes; and
-- recovery test returns `HEALTHY`.
+- TypeScript project check succeeds;
+- archive v2 round-trip succeeds;
+- public archive JSON does not contain demo node/channel identifiers;
+- wrong password fails authentication;
+- AAD-bound manifest tampering fails authentication;
+- ciphertext tampering still fails AES-GCM even if the public SHA-256 digest is recomputed;
+- legacy v1 archive restore is rejected;
+- same-ID/wrong-channel-state verification becomes `UNSAFE`;
+- unavailable record families become `UNKNOWN`/`DEGRADED`;
+- unregistered version pairs remain `review` and cannot restore;
+- a different live target is blocked; and
+- the deterministic loss → restore path ends `HEALTHY`.
 
 ## B. Browser demo
 
@@ -24,52 +30,53 @@ Expected:
 npm run dev
 ```
 
-1. Confirm the starting demo session has two channels and three payments.
-2. Use the default demo password or choose another password with at least 10 characters.
-3. Click **Create encrypted archive**.
-4. Download the `.fcr.json` file.
+1. Confirm the starting demo session shows two channels and three payments.
+2. Use the default demo password or another password of at least 12 characters.
+3. Click **Create private v2 archive**.
+4. Download the `.fcr.json` and inspect it: demo node/channel/payment IDs must not be visible in plaintext.
 5. Click **Simulate browser-state loss**.
-6. Confirm Node ID changes to `LOST`, channels become `0`, and payments become `0`.
-7. Click **Restore + verify**.
-8. Confirm the recovery report is `HEALTHY`.
-9. Export the evidence JSON.
+6. Confirm node ID becomes `LOST` and record counts become zero.
+7. Click **Run preflight** and verify all three safety gates pass.
+8. Click **Restore + stabilize + verify**.
+9. Confirm the final report is `HEALTHY`.
+10. Export the evidence JSON if desired.
 
-## C. Corruption check
+## C. Tamper tests
 
-1. Download a recovery archive.
-2. Change a character in `ciphertext` without updating the manifest digest.
-3. Import it.
-4. Attempt restore.
+### Public header tamper
 
-Expected: FiberContinuity rejects the archive before native restore.
+Change `manifest.createdAt`, keep ciphertext unchanged, and try restore with the correct password.
 
-## D. Wrong password check
+Expected: AES-GCM authentication fails because the public header is AAD-bound.
 
-Expected: AES-GCM decryption fails and native restore is not called.
+### Ciphertext tamper
 
-## E. Network mismatch check
+Change ciphertext. Even if an attacker also recomputes `ciphertextDigest`, restore must still fail AES-GCM authentication.
 
-For an integration test, alter the adapter's network identity after backup.
+### Wrong password
 
-Expected: preflight blocks restore before mutation.
+Expected: authenticated decryption fails before native restore is invoked.
 
-## F. Version-policy check
+## D. Fail-closed policy tests
 
-The unit test asserts that 0.9.1 → 0.10.0-rc1 is blocked in accordance with the upstream prerelease warning.
+- Change target network identity: restore is blocked.
+- Use an unregistered version pair such as `0.9.0 → 0.9.1`: status is `review`, and restore is blocked.
+- Present a different node identity with existing records: restore is blocked.
+- Present same-identity but different live records without an explicit adapter safety hook: restore requires review instead of overwriting potentially newer state.
 
-## G. Real Fiber acceptance (future milestone)
+## E. Real Fiber acceptance milestone
 
-When official browser/native recovery hooks are integrated, retain for each run:
+For a pinned official integration retain redacted evidence for:
 
 - Fiber/FNN version and commit;
-- browser version;
+- browser/runtime version;
 - network identity;
-- public node ID;
-- channel IDs before and after;
-- payment/invoice identifiers available through the supported API;
-- archive digest;
-- fault injected;
-- recovery duration;
+- scenario/fault injected;
+- before/after public state supported by the integration;
+- archive SHA-256 corruption digest;
+- preflight decisions;
+- reconnect/reconciliation duration;
+- verification capability coverage; and
 - final health result.
 
-Do not publish secrets or private channel material that upstream guidance treats as sensitive.
+Never publish seed material, private keys, recovery passwords, or upstream-private channel material.

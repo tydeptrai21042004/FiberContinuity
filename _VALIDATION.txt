@@ -1,0 +1,19 @@
+FiberContinuity v0.2 change package
+
+Validation performed in this environment:
+- Core TypeScript modules + DemoFiberAdapter + FiberJsAdapter: strict TypeScript check passed.
+- All source files: syntax/type pass with temporary declarations for unavailable external packages.
+- Core executable smoke suite passed:
+  * archive v2 encrypt/decrypt round trip
+  * source node/channel metadata absent from public archive JSON
+  * AAD-bound manifest tamper rejection
+  * ciphertext tamper rejection even with recomputed SHA-256 digest
+  * same-ID/wrong-state recovery detection
+  * unknown verification coverage handling
+  * fail-closed preflight + demo loss/restore -> HEALTHY
+- package.json and vercel.json parse as valid JSON.
+- FILELIST.md references all present files.
+
+Environment limitation:
+- npm registry DNS was unavailable (EAI_AGAIN), so dependency installation and the repository's actual Vitest/Vite commands could not be executed here.
+- The repository includes CI and expanded Vitest tests so `npm run check && npm run build` can be run in a normal networked Node 20.19+ environment.

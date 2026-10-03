@@ -1,30 +1,23 @@
-# Upstream Fiber notes used by v0.1
+# Upstream integration notes
 
-These notes explain why the implementation is conservative.
+These notes describe assumptions encoded by the reference adapter. Revalidate them against the exact pinned Fiber release before a real-funds integration.
 
-## Fiber JS
+## Fiber JS boundary
 
-The official npm package is `@nervosnetwork/fiber-js`. v0.9.1 documents:
+The project depends on `@nervosnetwork/fiber-js` 0.9.1. The development helper uses `Fiber`, `randomSecretKey`, and `getDefaultConfig()`, then requires the caller to provide browser-compatible secure-WebSocket bootnodes explicitly.
 
-- `Fiber` and `randomSecretKey`;
-- `getDefaultConfig(network, ckbRpcUrl)`;
-- browser bootnodes using secure WebSocket (`wss`) addresses; and
-- disabling listening-address announcement for browser configuration.
+The helper intentionally uses ephemeral keys. Production applications should inject their existing provider/account lifecycle.
 
-The development helper in this repository follows that documented bootstrap shape.
+## Native recovery
 
-## v0.9 line
+FiberContinuity treats native backup bytes as opaque. `FiberJsAdapter` refuses to guess an undocumented backup/restore RPC and requires explicit `NativeRecoveryHooks` from the pinned host integration.
 
-Fiber v0.9 introduced a unified database migration system and native storage backup/restore. The Fiber team has also been hardening restart/reconnect and on-chain reconciliation behavior.
+## Compatibility policy
 
-FiberContinuity treats native backup bytes as opaque and delegates actual restore semantics to the supported upstream path.
+Identical Fiber versions are supported by the generic reference policy. Other version pairs remain `review` unless a rule is deliberately registered. `review` is a blocking state, not a soft warning.
 
-## v0.10.0-rc1
+The existing explicit rule blocks older data into `0.10.0-rc1` based on the prerelease upgrade limitation identified during the original repository research. Recheck this rule whenever the pinned upstream version changes.
 
-The v0.10.0-rc1 release note explicitly states that upgrades from older versions are not supported by that prerelease. Therefore the v0.1 compatibility policy blocks 0.9.x → 0.10.0-rc1 restoration/migration rather than attempting it.
+## Observable history
 
-## Why no guessed backup RPC exists here
-
-The browser-facing `fiber-js` package documents its RPC-like command surface, but a project handling real funds should not assume that a node/operator backup command maps safely or identically onto an embedded browser storage backend.
-
-The integration must provide the exact supported native backup/restore hook for the pinned Fiber environment.
+The reference `FiberJsAdapter` normalizes node identity and channel metadata from its documented command surface. It does not invent payment/invoice history field shapes. Until a pinned integration exposes them intentionally, those record families are marked `unavailable` and recovery verification reports `UNKNOWN`.

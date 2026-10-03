@@ -1,16 +1,21 @@
 # Security model
 
-FiberContinuity handles recovery material. Treat every design choice as security-sensitive.
+FiberContinuity handles recovery material. The code therefore defaults to refusing ambiguous destructive actions rather than interpreting ambiguity as success.
 
-## v0.1 invariants
+## v0.2 invariants
 
-1. Native backup bytes are encrypted before export.
-2. The demo does not upload recovery payloads to a server.
-3. The plaintext manifest must not contain seed phrases, private keys, passwords, macaroon/biscuit tokens, or wallet secrets.
-4. Restore is blocked if network identity does not match.
-5. Known-incompatible version paths are blocked before native mutation.
-6. Restore completion is followed by post-restore verification.
-7. FiberContinuity does not directly manipulate undocumented Fiber database keys or channel-state records.
+1. Native backup bytes and the pre-recovery snapshot are encrypted together before export.
+2. Node/channel/payment/invoice metadata is not present in the public v2 archive header.
+3. AES-256-GCM authenticates the private recovery envelope.
+4. Security-relevant immutable public header fields are bound with AES-GCM AAD.
+5. The public SHA-256 ciphertext digest is treated only as an accidental-corruption check, not an authenticity mechanism.
+6. Legacy v1 archives are blocked because their preflight metadata was not cryptographically authenticated.
+7. Network mismatch blocks restore before native mutation.
+8. `review` and `blocked` compatibility decisions both block restore.
+9. A target that may contain unrelated or newer state is not overwritten unless the adapter can explicitly prove the operation safe.
+10. Unsupported record visibility produces `UNKNOWN`, not a false verification PASS.
+11. Native restore/restart exceptions trigger a best-effort rollback to the target bytes captured immediately before mutation when such export succeeds.
+12. FiberContinuity never directly edits undocumented Fiber database keys/channel-state records.
 
 ## Password encryption
 
@@ -18,23 +23,54 @@ The reference archive uses:
 
 - PBKDF2-SHA256;
 - 310,000 iterations;
-- a random 128-bit salt;
-- AES-256-GCM; and
-- a random 96-bit IV.
+- random 128-bit salt;
+- AES-256-GCM;
+- random 96-bit IV;
+- 128-bit authentication tag; and
+- a minimum 12-character recovery password in the reference UI/core.
 
-This is appropriate for a prototype/reference implementation, but a production wallet should review its password/KDF policy and may prefer platform-backed key storage, passkeys, hardware-backed secrets, or a memory-hard KDF where available.
+PBKDF2 is chosen because it is available through browser Web Crypto without adding a heavyweight cryptographic runtime. A production wallet should review the KDF/password policy for its threat model and may prefer platform-backed secrets or a reviewed memory-hard construction.
 
-## Threats not solved by v0.1
+## Archive metadata
+
+The public manifest necessarily exposes approximate creation time, KDF parameters, salt/IV, format version, and ciphertext length/digest. It does **not** expose the source node ID, network identity, channel IDs, balances, payment history, or invoice history.
+
+Changing AAD-bound public fields without the password causes AES-GCM authentication to fail. Changing salt/IV also makes decryption fail because the correct key/nonce can no longer be reproduced.
+
+## Destructive restore policy
+
+A restore is allowed only when all three gates are safe:
+
+```text
+network match
+AND compatibility == supported
+AND targetSafety == safe
+```
+
+A same-node target that differs from the backup can represent newer live state. Core fallback policy therefore marks it `review` instead of treating matching node identity as sufficient authorization to overwrite it.
+
+Live adapters should implement `assessRestoreTarget()` using runtime-specific knowledge such as a dedicated empty recovery profile, stopped node lifecycle, or another reviewed condition.
+
+## Verification boundary
+
+`HEALTHY` means all checks supported by the before/after snapshots passed. If a record family is unavailable, the report is at least `DEGRADED` with `UNKNOWN` checks. This avoids claiming continuity for data the adapter cannot observe.
+
+A health report is still not proof that an upstream channel state is economically safe to publish. Fiber/FNN remains authoritative for channel recovery semantics.
+
+## Threats not solved
 
 FiberContinuity does not protect against:
 
-- malware or a compromised browser runtime;
-- a malicious upstream Fiber package;
-- users losing both their recovery archive and password;
-- unsafe upstream restore semantics;
-- restoring a cryptographically valid but operationally stale channel state when upstream Fiber says that path is unsafe;
-- secret leakage caused by an integrating wallet/provider.
+- malware or a compromised browser/OS;
+- a malicious upstream dependency;
+- weak/reused recovery passwords;
+- users losing both archive and password;
+- unsafe behavior inside an upstream native restore hook;
+- a host integration lying about version/network/target safety;
+- rollback failure after a partially destructive upstream restore;
+- operationally stale channel state that upstream Fiber itself considers unsafe; or
+- secrets leaked elsewhere by the integrating wallet/provider.
 
 ## Production requirement
 
-Before real funds are used, pin the exact Fiber release, verify the supported migration path, audit the adapter's native recovery hooks, and run the recovery test matrix against the exact deployed environment.
+Before real funds are used: pin the exact Fiber release, verify supported backup/migration semantics with upstream, audit the adapter/native hooks, provide an explicit destructive-target policy, exercise reconnect/reconciliation behavior, and run the fault matrix against the exact browser/provider environment.

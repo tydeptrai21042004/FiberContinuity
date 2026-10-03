@@ -1,18 +1,6 @@
 # Vercel deployment
 
-FiberContinuity v0.1 is intentionally structured as a single static Vite application.
-
-## Why this is simpler than a monorepo
-
-For the first grant/CKBuilder validation phase, there is no need for:
-
-- a separate API service;
-- a database;
-- a worker queue;
-- an auth server; or
-- multiple Vercel projects.
-
-Everything required for the demo runs in the browser.
+FiberContinuity v0.2 remains a single static Vite application. The deterministic demo needs no API service, database, worker queue, auth server, or server-held secret.
 
 ## Deploy from GitHub
 
@@ -20,31 +8,33 @@ Everything required for the demo runs in the browser.
 2. In Vercel choose **Add New → Project**.
 3. Import the GitHub repository.
 4. Confirm framework: **Vite**.
-5. Confirm build command: `npm run build`.
-6. Confirm output: `dist`.
+5. Build command: `npm run build`.
+6. Output directory: `dist`.
 7. Deploy.
 
-`vercel.json` is committed, so the browser-isolation headers are applied automatically.
+`vercel.json` commits the install/build/output settings and browser security headers.
 
-## Why COOP/COEP are included
+## Security headers
 
-Browser/WASM Fiber integrations may use `SharedArrayBuffer`/multithreaded WASM. The committed headers create the cross-origin isolated context those runtimes commonly require.
+The deployment includes:
 
-Avoid third-party scripts/assets that do not satisfy COEP. Host critical assets locally.
+- COOP/COEP/CORP for cross-origin isolation;
+- `X-Content-Type-Options: nosniff`;
+- frame blocking;
+- strict referrer policy;
+- restrictive permissions policy; and
+- a CSP that permits local scripts/WASM, HTTPS/WSS network connections, and worker blobs while blocking object embedding and framing.
+
+If a future pinned Fiber runtime needs a narrower or different CSP capability, review it explicitly rather than removing the policy wholesale.
 
 ## Environment variables
 
-Demo mode: none.
+Demo mode: **none**.
 
-Optional development Fiber bootstrap:
+Do not place private keys, seed phrases, recovery passwords, or signing material in `VITE_*` variables. Vite exposes those values to the browser bundle.
 
-```env
-VITE_CKB_RPC_URL=https://testnet.ckbapp.dev/
-VITE_FIBER_NETWORK=testnet
-```
+## Browser Fiber development helper
 
-Do **not** put private keys in Vercel environment variables for a client-side browser wallet. `VITE_*` values are public to the browser bundle.
+[`createFiberJsBrowserNode.ts`](../src/adapters/createFiberJsBrowserNode.ts) requires explicit secure-WebSocket (`/wss`) bootnodes and creates ephemeral keys. It is a development bootstrap helper, not a production wallet lifecycle.
 
-## Production mode recommendation
-
-A real wallet integration should inject an already-started Fiber/provider into `FiberJsAdapter` and provide reviewed backup/restore hooks. Keep private signing material under the wallet/provider's own security boundary.
+A production integration should inject an already-started reviewed Fiber/provider plus the exact native recovery hooks into `FiberJsAdapter`.

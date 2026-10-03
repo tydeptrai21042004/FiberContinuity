@@ -1,46 +1,51 @@
 # Roadmap
 
-## v0.1 — deployable recovery reference
+## v0.2 — hardened reference implementation (current)
 
-- Vercel-safe static web app
-- deterministic demo Fiber adapter
-- client-side encrypted recovery archive
-- integrity validation
-- network identity preflight
-- conservative version policy
-- post-restore health verification
-- reproducible tests and evidence export
+- private authenticated archive v2
+- AAD-bound public header
+- fail-closed version policy
+- destructive-target protection including stale same-identity state
+- consistent-checkpoint interface plus fallback consistency detection
+- capability-aware field verification
+- stable-state wait before final report
+- best-effort rollback on native restore/restart exceptions
+- explicit browser WSS bootnode requirement
+- Vercel/CI/repository hardening
 
-## v0.2 — official Fiber testnet adapter
+## v0.3 — pinned official Fiber testnet adapter
 
-Prerequisite: confirm the exact supported browser/native backup and restore entry points with Fiber maintainers.
+Prerequisite: confirm the exact supported native/browser backup and restore entry points for one stable Fiber release.
 
-- pin one stable Fiber release
-- integrate official native backup hook
-- integrate official restore/restart flow
-- test against CKB Testnet
-- publish retained recovery evidence
+- pin one stable Fiber/FNN release and commit
+- implement reviewed native backup/restore hooks
+- implement explicit target-safety proof for the chosen runtime
+- add upstream-aware reconnect/reconciliation readiness
+- run a real CKB testnet backup → loss → restore cycle
+- publish redacted retained evidence
 
-## v0.3 — browser lifecycle fault lab
+## v0.4 — lifecycle fault lab
 
 - tab close/reopen
 - browser profile reset
-- IndexedDB loss simulation where safe
+- safe local-storage/IndexedDB loss simulation appropriate to the pinned runtime
+- restore interruption/failure injection
 - interrupted payment observation
-- reconnect/reconciliation timing
-- supported Fiber release migration
+- peer reconnect/reconciliation timing
+- supported release migration tests
+- repeated runs across browser engines where the upstream runtime supports them
 
-## v0.4 — independent consumer
+## v0.5 — independent consumer
 
-Integrate FiberContinuity into one independently maintained Fiber web app/provider. The goal is to prove the project removes duplicated lifecycle/recovery code outside its own demo.
+Integrate FiberContinuity into one independently maintained Fiber web app/provider to prove that the adapter/workflow removes duplicated lifecycle code outside its own demo.
 
 ## Explicitly out of scope
 
-- new payment protocol
-- new channel-state recovery protocol
-- Hosted LSP implementation
+- a new payment protocol
+- a new channel-state recovery protocol
+- hosted LSP implementation
 - liquidity management
 - generic wallet extension
 - cloud custody
 - social recovery
-- CellFlow/EventMesh functionality
+- direct manipulation of undocumented Fiber storage internals

@@ -1,163 +1,180 @@
 # FiberContinuity
 
-**FiberContinuity** is a web-first reference implementation for safe browser-session backup, restore, migration preflight, and post-restore verification for self-custodial Fiber applications.
+**FiberContinuity** is a web-first reference implementation for safe browser-session backup, restore preflight, recovery stabilization, and post-restore verification for self-custodial Fiber applications.
 
-The project intentionally does **not** implement its own Fiber channel recovery protocol or rewrite Fiber storage. It sits above official/native Fiber recovery primitives and adds the product layer that a browser application needs:
+It deliberately does **not** invent a second channel-recovery protocol or manipulate undocumented Fiber database keys. The continuity engine treats the native Fiber backup as opaque and requires a reviewed adapter/native recovery hook for the actual runtime.
 
-1. inspect the session before backup;
-2. export a native Fiber backup through an explicit adapter hook;
-3. encrypt the backup client-side;
-4. record recovery metadata and integrity digests;
-5. block obviously incompatible restores;
-6. invoke the supported native restore path;
-7. inspect the recovered Fiber state; and
-8. compare before/after state to produce a portable recovery-health report.
+## What v0.2 hardens
 
-## Why this repository is Vercel-friendly
+The v0.2 archive and restore flow addresses the main safety gaps in the first prototype:
 
-The first version is deliberately a **single Vite + React application**, not a multi-app monorepo. Vercel can deploy it as a static site with no database and no server secrets.
+- the Fiber snapshot and native backup are encrypted **together** inside AES-256-GCM;
+- node/channel/payment/invoice metadata is no longer exposed in the public archive header;
+- security-relevant public header fields are bound as AES-GCM additional authenticated data (AAD);
+- legacy v1 archives are rejected because their preflight metadata was not authenticated;
+- unknown/`review` version pairs now fail closed before mutation;
+- a different live target, or potentially newer same-identity state, is not overwritten automatically;
+- backup creation prefers an adapter-defined atomic checkpoint and otherwise detects observable state changes during export;
+- verification compares channel state/peer/balances and payment/invoice status/amount when the adapter can observe them;
+- unsupported payment/invoice visibility is reported as **UNKNOWN**, never a false PASS;
+- restore waits for an observable stable state before issuing the health report;
+- native restore/restart exceptions trigger a best-effort in-memory rollback checkpoint; and
+- browser bootstrap requires explicit secure-WebSocket Fiber bootnodes instead of inheriting TCP defaults.
 
-`vercel.json` includes the COOP/COEP headers normally required by multithreaded browser WASM integrations:
+## Architecture
 
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-- `Cross-Origin-Resource-Policy: same-origin`
+```text
+Web / PWA / extension
+        │
+        ▼
+ FiberContinuity
+        │
+ ┌──────┼───────────────┐
+ │      │               │
+Backup  Fail-closed   Verify
+ │      │ preflight      │
+ └──────┼───────────────┘
+        ▼
+  FiberAdapter
+        │
+        ▼
+official/native Fiber/FNN recovery integration
+```
 
-The demo adapter is the default, so reviewers can test the entire backup → state loss → restore → verify loop without handling real keys or funds.
+The adapter boundary is the important rule: **only the adapter knows how the supported Fiber runtime exports/restores native recovery bytes or proves that a restore target is safe**.
 
-## Structure
+## Repository structure
 
 ```text
 fiber-continuity/
+├── .github/workflows/ci.yml
 ├── src/
 │   ├── adapters/
 │   │   ├── FiberAdapter.ts
 │   │   ├── DemoFiberAdapter.ts
 │   │   ├── FiberJsAdapter.ts
 │   │   └── createFiberJsBrowserNode.ts
-│   ├── browser/
-│   │   └── files.ts
+│   ├── browser/files.ts
 │   ├── components/
 │   ├── core/
 │   │   ├── archive.ts
 │   │   ├── compatibility.ts
 │   │   ├── continuity.ts
 │   │   ├── crypto.ts
+│   │   ├── encoding.ts
+│   │   ├── errors.ts
 │   │   ├── types.ts
 │   │   └── verify.ts
 │   ├── App.tsx
 │   └── main.tsx
 ├── tests/
 ├── docs/
-├── evidence/
+├── evidence/runs/
 ├── vercel.json
 └── vite.config.ts
 ```
 
 ## Local run
 
+Node **20.19+** is required.
+
 ```bash
 npm install
+npm run check
+npm run build
 npm run dev
 ```
 
-Open the URL printed by Vite.
-
-## Tests
-
-```bash
-npm test
-npm run build
-```
-
-Node 20.19+ is required.
-
-## Deploy to Vercel
-
-### GitHub import
-
-1. Push this repository to GitHub.
-2. Open Vercel → **Add New → Project**.
-3. Import the repository.
-4. Vercel should detect **Vite**.
-5. Build command: `npm run build`.
-6. Output directory: `dist`.
-7. Deploy.
-
-No environment variables are required for demo mode.
-
-### Vercel CLI
-
-```bash
-npm i -g vercel
-vercel
-vercel --prod
-```
+`npm run check` runs TypeScript project checking followed by the Vitest suite.
 
 ## Demo flow
 
 1. Inspect the deterministic Fiber-like session.
-2. Enter a recovery password of at least 10 characters.
-3. Create an encrypted `.fcr.json` archive.
-4. Download the archive if desired.
+2. Use a recovery password with at least 12 characters.
+3. Click **Create private v2 archive**.
+4. Optionally download the `.fcr.json` archive.
 5. Click **Simulate browser-state loss**.
-6. Confirm that channels/payments disappear and the node identity becomes `LOST`.
-7. Click **Restore + verify**.
-8. FiberContinuity decrypts the archive, runs the adapter restore, re-inspects the session, and emits a recovery report.
+6. Run **Preflight** and confirm network, compatibility, and target-safety checks pass.
+7. Click **Restore + stabilize + verify**.
+8. Confirm recovery health and export the evidence JSON if desired.
+
+The static demo does not upload recovery payloads to a FiberContinuity backend.
+
+## v2 archive security boundary
+
+The public `.fcr.json` contains only a small cryptographic header and ciphertext:
+
+```json
+{
+  "manifest": {
+    "format": "fiber-continuity",
+    "formatVersion": 2,
+    "createdAt": "...",
+    "payload": {
+      "cipher": "AES-GCM-256",
+      "kdf": "PBKDF2-SHA256",
+      "iterations": 310000,
+      "salt": "...",
+      "iv": "...",
+      "aadVersion": 1,
+      "ciphertextDigest": "..."
+    }
+  },
+  "ciphertext": "..."
+}
+```
+
+The authenticated plaintext contains both:
+
+```text
+FiberSnapshot + opaque native Fiber backup bytes
+```
+
+The SHA-256 ciphertext digest is only a fast accidental-corruption check. **Authenticity comes from AES-GCM**, not from the digest.
+
+See [`docs/SECURITY.md`](docs/SECURITY.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Real Fiber integration
 
-`FiberJsAdapter` accepts an already-started `fiber-js` instance plus explicit native backup/restore hooks:
+[`FiberJsAdapter`](src/adapters/FiberJsAdapter.ts) accepts an already-started `fiber-js` instance plus explicit native backup/restore hooks:
 
 ```ts
 const adapter = new FiberJsAdapter({
   fiber,
-  version: "0.9.1",
+  version: "0.9.1", // actual running version; no silent default
   network: "testnet",
-  networkIdentity: "<ckb-genesis-or-deployment-id>",
+  networkIdentity: "<verified-network-identity>",
   recovery: {
-    exportBackup: async () => {
-      // call the official/native Fiber backup integration supported by your runtime
-      return backupBytes;
-    },
+    exportBackup: async () => backupBytes,
     restoreBackup: async (bytes) => {
-      // call the supported Fiber/FNN restore path
+      // exact supported Fiber/FNN restore path
     },
     restartAfterRestore: async () => {
-      // restart/reconnect the node if the upstream integration requires it
+      // restart/reconnect when required by the pinned upstream integration
     }
+  },
+  assessRestoreTarget: async (expected, current) => {
+    // Host integration must prove that destructive restore is safe when
+    // FiberContinuity cannot establish that from observable state alone.
+    return { status: "safe", reason: "Reviewed empty recovery profile." };
+  },
+  waitForRecoveryStable: async (expected, options) => {
+    // Optional upstream-aware reconnect/reconciliation readiness loop.
+    return recoveredSnapshot;
   }
 });
 ```
 
-This is deliberate: FiberContinuity does not guess undocumented browser storage internals or fabricate a backup RPC.
+FiberContinuity refuses to fabricate an undocumented backup RPC. If payment or invoice history is not available through the pinned integration, those verification checks are explicitly marked `UNKNOWN`.
 
-## Fiber JS development helper
+## Browser Fiber helper
 
-`createEphemeralFiberJsBrowserNode.ts` demonstrates the current official browser bootstrap pattern based on `@nervosnetwork/fiber-js` 0.9.1 and `getDefaultConfig()`.
+[`createFiberJsBrowserNode.ts`](src/adapters/createFiberJsBrowserNode.ts) is development-only. It uses ephemeral keys and requires explicit `/wss` bootnodes. Production applications should inject their existing reviewed Fiber/provider lifecycle instead.
 
-It uses **ephemeral keys** and is therefore for development/testing only. A production wallet must provide its own reviewed credential/account lifecycle.
+## Vercel deployment
 
-## Current upstream policy encoded in v0.1
-
-The compatibility preflight explicitly blocks restoring older 0.9.x data into **Fiber v0.10.0-rc1**, because that prerelease states that upgrades from older versions are not supported yet.
-
-This policy is intentionally conservative. Unknown version pairs are marked for review instead of being silently treated as safe.
-
-## Security boundary
-
-See [`docs/SECURITY.md`](docs/SECURITY.md).
-
-Important properties of the v0.1 design:
-
-- encryption happens in the browser;
-- no plaintext backup is sent to a FiberContinuity server;
-- the archive includes integrity digests;
-- restore checks network identity before mutation;
-- version compatibility is checked before mutation;
-- post-restore verification is mandatory;
-- a native Fiber restore succeeding does not automatically mean continuity is healthy.
+The demo is a single Vite + React site with no database or server secret. `vercel.json` includes browser-isolation and baseline security headers. See [`docs/VERCEL_DEPLOY.md`](docs/VERCEL_DEPLOY.md).
 
 ## Status
 
-This repository is a **reference/prototype implementation**. The default Vercel demo uses simulated data. Before real funds are used, the live adapter and native recovery hooks must be reviewed against the exact Fiber release and browser/provider environment being supported.
+This remains a **reference implementation**. The deterministic adapter proves the application safety/state-machine behavior; it does not by itself prove real Fiber/FNN recovery. The next ecosystem milestone should be one pinned Fiber testnet backup → loss → restore → reconnect/reconcile → verify run with retained evidence.

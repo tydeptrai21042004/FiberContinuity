@@ -1,5 +1,6 @@
-import type { FiberAdapter } from "./FiberAdapter";
-import type { FiberSnapshot } from "../core/types";
+import type { FiberAdapter, RecoveryCheckpoint, RecoveryStabilityOptions } from "./FiberAdapter";
+import type { FiberSnapshot, RestoreTargetAssessment } from "../core/types";
+import { comparableSnapshot } from "../core/verify";
 
 interface DemoState {
   fiberVersion: string;
@@ -37,26 +38,65 @@ export class DemoFiberAdapter implements FiberAdapter {
   readonly name = "demo-fiber-0.9.1";
   private state: DemoState = clone(INITIAL);
 
-  async inspect(): Promise<FiberSnapshot> {
+  private snapshotFrom(state: DemoState): FiberSnapshot {
     return {
       capturedAt: new Date().toISOString(),
       adapter: this.name,
-      ...clone(this.state)
+      capabilities: {
+        channels: "full",
+        payments: "full",
+        invoices: "full"
+      },
+      ...clone(state)
     };
+  }
+
+  async inspect(): Promise<FiberSnapshot> {
+    return this.snapshotFrom(this.state);
   }
 
   async exportNativeBackup(): Promise<Uint8Array> {
     return new TextEncoder().encode(JSON.stringify(this.state));
   }
 
+  async createRecoveryCheckpoint(): Promise<RecoveryCheckpoint> {
+    const state = clone(this.state);
+    return {
+      snapshot: this.snapshotFrom(state),
+      nativeBackup: new TextEncoder().encode(JSON.stringify(state))
+    };
+  }
+
   async restoreNativeBackup(data: Uint8Array): Promise<void> {
     const parsed = JSON.parse(new TextDecoder().decode(data)) as DemoState;
-    if (!parsed.nodeId || !Array.isArray(parsed.channels)) throw new Error("Demo backup is invalid.");
+    if (!parsed.nodeId || !Array.isArray(parsed.channels) || !Array.isArray(parsed.payments) || !Array.isArray(parsed.invoices)) {
+      throw new Error("Demo backup is invalid.");
+    }
     this.state = clone(parsed);
   }
 
   async restartAfterRestore(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  async assessRestoreTarget(expected: FiberSnapshot, current: FiberSnapshot): Promise<RestoreTargetAssessment> {
+    const records = current.channels.length + current.payments.length + current.invoices.length;
+    if (expected.nodeId === current.nodeId) {
+      if (comparableSnapshot(expected) === comparableSnapshot(current)) {
+        return { status: "safe", reason: "Demo target already matches the authenticated backup snapshot." };
+      }
+      return records === 0
+        ? { status: "safe", reason: "Demo target retains the source identity but has no recovery records." }
+        : { status: "review", reason: "Demo target has same-identity state that differs from the backup; stale overwrite is refused." };
+    }
+    return records === 0
+      ? { status: "safe", reason: "Demo target is an intentionally empty simulated-loss state." }
+      : { status: "blocked", reason: "Demo target contains state belonging to another node identity." };
+  }
+
+  async waitForRecoveryStable(_expected: FiberSnapshot, _options: RecoveryStabilityOptions): Promise<FiberSnapshot> {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return this.inspect();
   }
 
   simulateBrowserStateLoss(): void {

@@ -1,6 +1,6 @@
 {
   "name": "fiber-continuity",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "check": "tsc -b --pretty false && vitest run"
+    "check": "npm run typecheck && vitest run",
+    "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
     "@nervosnetwork/fiber-js": "0.9.1",
@@ -27,6 +28,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "typescript": "^5.9.2",
     "vite": "^7.1.7",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@vitest/coverage-v8": "^3.2.4"
   }
 }
