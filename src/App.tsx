@@ -169,7 +169,7 @@ export default function App() {
       </section>
 
       <footer>
-        <span>FiberContinuity v0.2 hardened reference implementation</span>
+        <span>FiberContinuity v0.2.1 hardened reference implementation</span>
         <span>Demo data only — do not use with production funds without supported upstream recovery hooks and integration review.</span>
       </footer>
     </main>

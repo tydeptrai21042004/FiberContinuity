@@ -1,19 +1,25 @@
-FiberContinuity v0.2 change package
+FiberContinuity v0.2.1 Vercel build-fix validation
 
-Validation performed in this environment:
-- Core TypeScript modules + DemoFiberAdapter + FiberJsAdapter: strict TypeScript check passed.
-- All source files: syntax/type pass with temporary declarations for unavailable external packages.
-- Core executable smoke suite passed:
-  * archive v2 encrypt/decrypt round trip
-  * source node/channel metadata absent from public archive JSON
-  * AAD-bound manifest tamper rejection
-  * ciphertext tamper rejection even with recomputed SHA-256 digest
-  * same-ID/wrong-state recovery detection
-  * unknown verification coverage handling
-  * fail-closed preflight + demo loss/restore -> HEALTHY
-- package.json and vercel.json parse as valid JSON.
-- FILELIST.md references all present files.
+Fixes applied
+-------------
+1. src/adapters/createFiberJsBrowserNode.ts
+   - BrowserNodeOptions.logLevel is now the exact literal union accepted by @nervosnetwork/fiber-js@0.9.1:
+     "error" | "trace" | "debug" | "info".
 
-Environment limitation:
-- npm registry DNS was unavailable (EAI_AGAIN), so dependency installation and the repository's actual Vitest/Vite commands could not be executed here.
-- The repository includes CI and expanded Vitest tests so `npm run check && npm run build` can be run in a normal networked Node 20.19+ environment.
+2. src/core/crypto.ts
+   - Password UTF-8 bytes are normalized through bufferSource(...) before crypto.subtle.importKey.
+   - This removes the TypeScript 5.9 Uint8Array<ArrayBufferLike> -> BufferSource mismatch seen on Vercel.
+
+3. package.json
+   - Node is pinned to 20.x for Vercel stability.
+   - esbuild install scripts are explicitly approved because the Vercel install log showed esbuild@0.28.2 postinstall was skipped.
+
+Validation performed
+--------------------
+PASS: focused strict TypeScript compile for crypto.ts and createFiberJsBrowserNode.ts using a Fiber.start signature matching the Vercel diagnostic.
+PASS: strict compile of all core modules plus DemoFiberAdapter.
+PASS: executable core smoke suite, including authenticated archive tamper rejection and backup -> simulated loss -> restore -> HEALTHY.
+
+Environment limitation
+----------------------
+A full npm install could not be completed in the sandbox because registry.npmjs.org returned EAI_AGAIN. The user's Vercel environment successfully installed dependencies, so the remaining validation should be the Vercel redeploy itself.

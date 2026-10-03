@@ -17,7 +17,7 @@ async function deriveKey(
   usage: KeyUsage[]
 ): Promise<CryptoKey> {
   assertIterations(iterations);
-  const material = await crypto.subtle.importKey("raw", utf8(password), "PBKDF2", false, ["deriveKey"]);
+  const material = await crypto.subtle.importKey("raw", bufferSource(utf8(password)), "PBKDF2", false, ["deriveKey"]);
 
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", hash: "SHA-256", salt: bufferSource(salt), iterations },

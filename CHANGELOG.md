@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - Vercel/TypeScript build compatibility
+
+- Narrowed browser Fiber `logLevel` to the literal union accepted by `@nervosnetwork/fiber-js@0.9.1`.
+- Normalized password bytes to an `ArrayBuffer` before `crypto.subtle.importKey`, avoiding TypeScript 5.9 `Uint8Array<ArrayBufferLike>`/`BufferSource` incompatibility.
+- Pinned the Vercel/Node engine to Node 20.x instead of an open-ended `>=20.19.0` range.
+
+
 ## 0.2.0
 
 ### Security

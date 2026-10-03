@@ -5,7 +5,7 @@ export interface BrowserNodeOptions {
   ckbRpcUrl: string;
   /** Browser nodes must use explicitly supplied secure-WebSocket Fiber bootnodes. */
   bootnodes: string[];
-  logLevel?: string;
+  logLevel?: "error" | "trace" | "debug" | "info";
 }
 
 function assertBrowserBootnodes(bootnodes: string[]): void {
