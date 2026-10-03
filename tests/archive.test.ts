@@ -4,7 +4,7 @@ import { createArchive, decryptArchive, validateArchive } from "../src/core/arch
 import { sha256Hex } from "../src/core/crypto";
 import { base64ToBytes, bytesToBase64 } from "../src/core/encoding";
 
-if (!globalThis.crypto?.subtle) throw new Error("Tests require Node 20+ Web Crypto.");
+if (!globalThis.crypto?.subtle) throw new Error("Tests require Node 24 Web Crypto.");
 
 describe("recovery archive v2", () => {
   it("encrypts, validates and decrypts both snapshot and native backup", async () => {

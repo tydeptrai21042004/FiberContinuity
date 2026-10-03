@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 — Vercel Node 24 runtime alignment
+
+- Updated `engines.node` from `20.x` to `24.x` because Vercel now rejects Node 20 projects before installation.
+- Updated GitHub Actions to Node 24.x so CI matches production.
+- Added `.nvmrc` and `.node-version` with Node 24 for local runtime consistency.
+- Updated README, validation notes, and test runtime wording to remove stale Node 20 guidance.
+
+
 ## 0.2.1 - Vercel/TypeScript build compatibility
 
 - Narrowed browser Fiber `logLevel` to the literal union accepted by `@nervosnetwork/fiber-js@0.9.1`.

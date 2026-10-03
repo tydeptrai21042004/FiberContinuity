@@ -3,6 +3,8 @@
 - `.env.example`
 - `.github/workflows/ci.yml`
 - `.gitignore`
+- `.nvmrc`
+- `.node-version`
 - `CHANGELOG.md`
 - `README.md`
 - `docs/ARCHITECTURE.md`

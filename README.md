@@ -76,7 +76,7 @@ fiber-continuity/
 
 ## Local run
 
-Node **20.19+** is required.
+Node **24.x** is required for the current Vercel runtime and CI configuration.
 
 ```bash
 npm install
