@@ -5,7 +5,7 @@
 
 The project targets **Node.js 24.x**. `package.json`, `.nvmrc`, `.node-version`, and GitHub Actions use the same major version so Vercel, CI, and local builds do not drift.
 
-FiberContinuity v0.2 remains a single static Vite application. The deterministic demo needs no API service, database, worker queue, auth server, or server-held secret.
+FiberContinuity v0.3.1 remains a single static Vite application. The deterministic demo needs no API service, database, worker queue, auth server, or server-held secret.
 
 ## Deploy from GitHub
 

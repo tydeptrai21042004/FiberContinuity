@@ -2,6 +2,7 @@ import type { FiberAdapter, RecoveryStabilityOptions } from "../adapters/FiberAd
 import type { FiberSnapshot, RecoveryArchive, RecoveryPreflight, RecoveryReport, RestoreTargetAssessment } from "./types";
 import { assessCompatibility } from "./compatibility";
 import { createArchive, decryptArchive } from "./archive";
+import { UnsupportedCapabilityError } from "./errors";
 import { comparableSnapshot, verifyRecovery } from "./verify";
 
 export interface FiberContinuityOptions extends Partial<RecoveryStabilityOptions> {}
@@ -39,8 +40,13 @@ function normalizeStability(options: FiberContinuityOptions): RecoveryStabilityO
   return stability;
 }
 
+function hasUnavailableRecoveryVisibility(snapshot: FiberSnapshot): boolean {
+  return Object.values(snapshot.capabilities).some((coverage) => coverage === "unavailable");
+}
+
 function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): RestoreTargetAssessment {
   const visibleRecords = current.channels.length + current.payments.length + current.invoices.length;
+  const incompleteVisibility = hasUnavailableRecoveryVisibility(current);
 
   if (expected.nodeId === current.nodeId) {
     if (comparableSnapshot(expected) === comparableSnapshot(current)) {
@@ -52,7 +58,13 @@ function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): R
         reason: "Target has the same node identity but different live records. Refusing to overwrite potentially newer state without an explicit adapter safety decision."
       };
     }
-    return { status: "safe", reason: "Target keeps the source identity but has no visible recovery records." };
+    if (incompleteVisibility) {
+      return {
+        status: "review",
+        reason: "Target keeps the source identity but differs from the backup and some recovery state is unobservable. Supply an explicit target-safety hook before destructive restore."
+      };
+    }
+    return { status: "safe", reason: "Target keeps the source identity and all observable recovery record families are empty." };
   }
 
   if (visibleRecords > 0) {
@@ -62,7 +74,6 @@ function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): R
     };
   }
 
-  const incompleteVisibility = Object.values(current.capabilities).some((coverage) => coverage === "unavailable");
   if (incompleteVisibility) {
     return {
       status: "review",
@@ -74,6 +85,10 @@ function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): R
     status: "safe",
     reason: "Target identity differs, but the adapter reports an empty fully-observable recovery target."
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export class FiberContinuity {
@@ -166,7 +181,7 @@ export class FiberContinuity {
 
   /**
    * Captures rollback bytes while proving the target did not change between preflight and mutation.
-   * This closes the common check-then-use race in browser/app recovery flows.
+   * Only an explicit UnsupportedCapabilityError may disable rollback. Operational export failures abort.
    */
   private async prepareRollback(expectedTarget: FiberSnapshot): Promise<Uint8Array | undefined> {
     if (this.adapter.createRecoveryCheckpoint) {
@@ -190,11 +205,24 @@ export class FiberContinuity {
       }
       return rollback;
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("Restore aborted:")) throw error;
-      // Some upstream adapters may not expose backup from an empty/recovery target.
-      // Restore can proceed, but without automatic rollback protection.
-      return undefined;
+      if (error instanceof UnsupportedCapabilityError) return undefined;
+      throw new Error(`Restore aborted: rollback checkpoint could not be captured safely. ${errorMessage(error)}`);
     }
+  }
+
+  private async rollbackAfterFailure(rollback: Uint8Array | undefined, failure: unknown): Promise<never> {
+    if (!rollback) throw failure instanceof Error ? failure : new Error(String(failure));
+
+    try {
+      await this.adapter.restoreNativeBackup(rollback);
+      await this.adapter.restartAfterRestore?.();
+    } catch (rollbackError) {
+      throw new Error(
+        `Recovery failed and the automatic rollback also failed. Recovery error: ${errorMessage(failure)}. Rollback error: ${errorMessage(rollbackError)}`
+      );
+    }
+
+    throw new Error(`Recovery failed; the previous target checkpoint was restored. Original error: ${errorMessage(failure)}`);
   }
 
   async restore(archive: RecoveryArchive, password: string): Promise<RecoveryReport> {
@@ -205,23 +233,15 @@ export class FiberContinuity {
 
     const rollback = await this.prepareRollback(target);
 
+    let after: FiberSnapshot;
     try {
       await this.adapter.restoreNativeBackup(decoded.nativeBackup);
       await this.adapter.restartAfterRestore?.();
+      after = await this.waitForStableRecovery(decoded.snapshot);
     } catch (error) {
-      if (rollback) {
-        try {
-          await this.adapter.restoreNativeBackup(rollback);
-          await this.adapter.restartAfterRestore?.();
-        } catch {
-          throw new Error(`Native restore failed and the automatic rollback also failed. Original error: ${error instanceof Error ? error.message : String(error)}`);
-        }
-        throw new Error(`Native restore failed; the previous target checkpoint was restored. Original error: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      throw error;
+      return this.rollbackAfterFailure(rollback, error);
     }
 
-    const after = await this.waitForStableRecovery(decoded.snapshot);
     return verifyRecovery(decoded.snapshot, after);
   }
 }

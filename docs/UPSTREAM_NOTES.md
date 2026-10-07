@@ -20,4 +20,4 @@ The existing explicit rule blocks older data into `0.10.0-rc1` based on the prer
 
 ## Observable history
 
-The reference `FiberJsAdapter` normalizes node identity and channel metadata from its documented command surface. It does not invent payment/invoice history field shapes. Until a pinned integration exposes them intentionally, those record families are marked `unavailable` and recovery verification reports `UNKNOWN`.
+The reference `FiberJsAdapter` normalizes `node_info.pubkey` and `list_channels` records from the Fiber 0.9.x command surface. It recognizes the nested channel state shape (`state.state_name`) and the documented `local_balance` / `remote_balance` fields. Channel coverage is reported as `full` only when both balances are present for every observed channel; otherwise it falls back to `metadata`. Missing node/channel identifiers are rejected instead of replaced with synthetic values. It does not invent payment/invoice history field shapes. Until a pinned integration exposes them intentionally, those record families are marked `unavailable` and recovery verification reports `UNKNOWN`.

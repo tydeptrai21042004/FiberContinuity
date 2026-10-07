@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 — Fail-closed recovery hardening
+
+- Fixed generic target safety so an empty same-identity target with unavailable recovery visibility requires explicit review instead of being inferred safe.
+- Made rollback checkpoint capture fail closed on operational errors; only explicit unsupported capability may proceed without rollback.
+- Extended automatic rollback handling through restart and stabilization failures.
+- Made full-coverage payment/invoice verification mismatches hard failures.
+- Removed synthetic safety-critical IDs from `FiberJsAdapter`; missing/duplicate node/channel identity data now fails inspection.
+- Updated `FiberJsAdapter` to parse Fiber 0.9.x nested channel `state_name` plus local/remote balances, dynamically reporting full vs metadata channel coverage.
+- Replaced prefix-based prerelease matching with semantic-version parsing so rc10/rc11 are not confused with rc1.
+- Hardened archive validation for nested shapes, canonical base64, cryptographic parameter lengths, record schemas, duplicate IDs, bounded record counts, and browser memory limits.
+- Added regression tests for fail-closed target visibility, rollback export failures, stabilization rollback, strict archive parsing, semantic-version edge cases, and FiberJsAdapter identity handling.
+- Added Node 24 repository pins, GitHub CI, `.gitignore`, `.env.example`, and evidence-run placeholder files to match documented repository structure.
+- Aligned current-version wording across README, roadmap, security, and validation documentation.
+
+# Changelog
+
 ## 0.3.0 — Reviewer-ready recovery console
 
 - Reworked the demo UI into an operational recovery dashboard with workflow state, security guarantees, richer session inspection, archive metadata, evidence export, and responsive layout.

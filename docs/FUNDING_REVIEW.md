@@ -21,9 +21,12 @@ FiberContinuity is a continuity/recovery layer around **official/native Fiber ba
 - Source snapshot metadata encrypted together with the native backup.
 - Fail-closed network, compatibility and restore-target checks.
 - Target state is revalidated immediately before mutation to reduce check-then-use races.
-- Best-effort rollback checkpoint when the adapter permits one.
+- Fail-closed rollback checkpoint capture: operational backup failures abort before mutation; explicitly unsupported rollback may proceed without automatic rollback.
+- Automatic rollback attempt across native restore, restart, and stabilization exceptions.
 - Post-restore stabilization followed by explicit observable-state comparison.
 - Unknown/unavailable record visibility is reported as incomplete rather than a false PASS.
+- Full-visibility payment/invoice mismatches are hard failures rather than soft warnings.
+- The Fiber JS adapter refuses synthetic safety-critical node/channel identifiers and parses the Fiber 0.9.x nested channel state shape.
 
 ## Boundary for production integration
 

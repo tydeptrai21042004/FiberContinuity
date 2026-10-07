@@ -40,6 +40,7 @@
 - `tests/archive.test.ts`
 - `tests/browser-config.test.ts`
 - `tests/compatibility.test.ts`
+- `tests/fiber-js-adapter.test.ts`
 - `tests/recovery.test.ts`
 - `tests/verify.test.ts`
 - `tsconfig.app.json`

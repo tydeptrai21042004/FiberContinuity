@@ -114,3 +114,98 @@ describe("recovery edge-case guards", () => {
     await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/review target|stale|blocked/i);
   });
 });
+
+class IncompleteVisibilitySameIdentityTarget implements FiberAdapter {
+  readonly name = "incomplete-visibility";
+  restored = false;
+
+  constructor(private readonly snapshot: FiberSnapshot) {}
+
+  async inspect(): Promise<FiberSnapshot> {
+    return structuredClone(this.snapshot);
+  }
+
+  async exportNativeBackup(): Promise<Uint8Array> {
+    return new TextEncoder().encode("rollback");
+  }
+
+  async restoreNativeBackup(): Promise<void> {
+    this.restored = true;
+  }
+}
+
+class RollbackExportFailureTarget implements FiberAdapter {
+  readonly name = "rollback-export-failure";
+  restored = false;
+
+  constructor(private readonly snapshot: FiberSnapshot) {}
+
+  async inspect(): Promise<FiberSnapshot> {
+    return structuredClone(this.snapshot);
+  }
+
+  async exportNativeBackup(): Promise<Uint8Array> {
+    throw new Error("disk read failed");
+  }
+
+  async restoreNativeBackup(): Promise<void> {
+    this.restored = true;
+  }
+}
+
+class StabilizationFailureAdapter extends DemoFiberAdapter {
+  override async waitForRecoveryStable(): Promise<FiberSnapshot> {
+    throw new Error("peer reconciliation timed out");
+  }
+}
+
+describe("additional fail-closed restore guards", () => {
+  it("does not treat an empty same-identity target as safe when recovery visibility is incomplete", async () => {
+    const source = new DemoFiberAdapter();
+    const sourceSnapshot = await source.inspect();
+    const archive = await new FiberContinuity(source).createBackup("very-good-password");
+    const targetSnapshot: FiberSnapshot = {
+      ...structuredClone(sourceSnapshot),
+      capturedAt: new Date().toISOString(),
+      capabilities: { channels: "metadata", payments: "unavailable", invoices: "unavailable" },
+      channels: [],
+      payments: [],
+      invoices: []
+    };
+    const target = new IncompleteVisibilitySameIdentityTarget(targetSnapshot);
+    const continuity = new FiberContinuity(target);
+
+    const preflight = await continuity.preflight(archive, "very-good-password");
+    expect(preflight.targetSafety.status).toBe("review");
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/unobservable|target/i);
+    expect(target.restored).toBe(false);
+  });
+
+  it("aborts before mutation when rollback export fails operationally", async () => {
+    const source = new DemoFiberAdapter();
+    const sourceSnapshot = await source.inspect();
+    const archive = await new FiberContinuity(source).createBackup("very-good-password");
+    const targetSnapshot: FiberSnapshot = {
+      ...structuredClone(sourceSnapshot),
+      capturedAt: new Date().toISOString(),
+      channels: [],
+      payments: [],
+      invoices: []
+    };
+    const target = new RollbackExportFailureTarget(targetSnapshot);
+    const continuity = new FiberContinuity(target);
+
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/rollback checkpoint.*disk read failed/i);
+    expect(target.restored).toBe(false);
+  });
+
+  it("rolls back when post-restore stabilization fails", async () => {
+    const adapter = new StabilizationFailureAdapter();
+    const continuity = new FiberContinuity(adapter);
+    const archive = await continuity.createBackup("very-good-password");
+    adapter.simulateBrowserStateLoss();
+
+    await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/previous target checkpoint was restored/i);
+    expect((await adapter.inspect()).channels).toHaveLength(0);
+  });
+});

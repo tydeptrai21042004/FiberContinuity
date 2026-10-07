@@ -1,12 +1,40 @@
-import type { BackupManifest, FiberSnapshot, RecoveryArchive, RecoveryEnvelope } from "./types";
+import type { BackupManifest, FiberSnapshot, RecoveryArchive, RecoveryEnvelope, RecordCoverage } from "./types";
 import { decryptBytes, encryptBytes, sha256Hex } from "./crypto";
-import { base64ToBytes, bytesToBase64, text, utf8 } from "./encoding";
+import { base64ToBytesStrict, bytesToBase64, text, utf8 } from "./encoding";
 
-const MAX_CIPHERTEXT_BYTES = 256 * 1024 * 1024;
-export const MAX_ARCHIVE_JSON_BYTES = 350 * 1024 * 1024;
+/** Browser-oriented guardrails. Base64/JSON copies can use several times the raw backup size in memory. */
+export const MAX_CIPHERTEXT_BYTES = 128 * 1024 * 1024;
+export const MAX_ARCHIVE_JSON_BYTES = 180 * 1024 * 1024;
+export const MAX_NATIVE_BACKUP_BYTES = 96 * 1024 * 1024;
+const MAX_RECORDS_PER_FAMILY = 100_000;
+const MAX_ID_LENGTH = 4_096;
+const MAX_TEXT_FIELD_LENGTH = 16_384;
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function requiredString(value: unknown, label: string, maxLength = MAX_TEXT_FIELD_LENGTH): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    throw new Error(`${label} is missing or invalid.`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, label: string, maxLength = MAX_TEXT_FIELD_LENGTH): string | undefined {
+  if (value === undefined) return undefined;
+  return requiredString(value, label, maxLength);
+}
+
+function assertCoverage(value: unknown, label: string): asserts value is RecordCoverage {
+  if (value !== "full" && value !== "metadata" && value !== "unavailable") {
+    throw new Error(`${label} is invalid.`);
+  }
+}
 
 function publicAad(manifest: BackupManifest): Uint8Array {
-  // Build a fixed-order object so JSON property order from an imported file is irrelevant.
   return utf8(JSON.stringify({
     format: manifest.format,
     formatVersion: manifest.formatVersion,
@@ -18,41 +46,95 @@ function publicAad(manifest: BackupManifest): Uint8Array {
   }));
 }
 
-function assertSnapshot(snapshot: FiberSnapshot): void {
-  if (!snapshot || typeof snapshot !== "object") throw new Error("Archive recovery snapshot is missing.");
-  if (!snapshot.nodeId || !snapshot.fiberVersion || !snapshot.networkIdentity || !snapshot.adapter) {
-    throw new Error("Archive recovery snapshot is incomplete.");
-  }
-  if (!["testnet", "mainnet", "unknown"].includes(snapshot.network)) {
-    throw new Error("Archive recovery snapshot has an invalid network name.");
-  }
-  if (Number.isNaN(Date.parse(snapshot.capturedAt))) {
+function assertRecordArray(value: unknown, label: string): JsonRecord[] {
+  if (!Array.isArray(value)) throw new Error(`Archive recovery snapshot ${label} list is invalid.`);
+  if (value.length > MAX_RECORDS_PER_FAMILY) throw new Error(`Archive recovery snapshot contains too many ${label} records.`);
+  return value.map((item, index) => {
+    if (!isRecord(item)) throw new Error(`Archive recovery snapshot contains an invalid ${label} record at index ${index}.`);
+    return item;
+  });
+}
+
+function assertSnapshot(snapshot: unknown): asserts snapshot is FiberSnapshot {
+  if (!isRecord(snapshot)) throw new Error("Archive recovery snapshot is missing.");
+
+  requiredString(snapshot.capturedAt, "Archive recovery snapshot capture timestamp");
+  if (Number.isNaN(Date.parse(snapshot.capturedAt as string))) {
     throw new Error("Archive recovery snapshot has an invalid capture timestamp.");
   }
-  if (!Array.isArray(snapshot.channels) || !Array.isArray(snapshot.payments) || !Array.isArray(snapshot.invoices)) {
-    throw new Error("Archive recovery snapshot record lists are invalid.");
+  requiredString(snapshot.adapter, "Archive recovery snapshot adapter");
+  requiredString(snapshot.fiberVersion, "Archive recovery snapshot Fiber version");
+  requiredString(snapshot.networkIdentity, "Archive recovery snapshot network identity");
+  requiredString(snapshot.nodeId, "Archive recovery snapshot node identity", MAX_ID_LENGTH);
+  if (snapshot.network !== "testnet" && snapshot.network !== "mainnet" && snapshot.network !== "unknown") {
+    throw new Error("Archive recovery snapshot has an invalid network name.");
   }
-  const coverage = [snapshot.capabilities?.channels, snapshot.capabilities?.payments, snapshot.capabilities?.invoices];
-  if (coverage.some((value) => !["full", "metadata", "unavailable"].includes(value ?? ""))) {
-    throw new Error("Archive recovery snapshot capabilities are invalid.");
+  if (!isRecord(snapshot.capabilities)) throw new Error("Archive recovery snapshot capabilities are invalid.");
+  assertCoverage(snapshot.capabilities.channels, "Archive channel coverage");
+  assertCoverage(snapshot.capabilities.payments, "Archive payment coverage");
+  assertCoverage(snapshot.capabilities.invoices, "Archive invoice coverage");
+
+  const channels = assertRecordArray(snapshot.channels, "channel");
+  const payments = assertRecordArray(snapshot.payments, "payment");
+  const invoices = assertRecordArray(snapshot.invoices, "invoice");
+
+  const seen = (records: JsonRecord[], label: string): void => {
+    const ids = records.map((record, index) => requiredString(record.id, `Archive ${label}[${index}] identifier`, MAX_ID_LENGTH));
+    if (new Set(ids).size !== ids.length) throw new Error(`Archive recovery snapshot contains duplicate ${label} identifiers.`);
+  };
+  seen(channels, "channel");
+  seen(payments, "payment");
+  seen(invoices, "invoice");
+
+  channels.forEach((record, index) => {
+    requiredString(record.state, `Archive channel[${index}] state`);
+    optionalString(record.peer, `Archive channel[${index}] peer`, MAX_ID_LENGTH);
+    optionalString(record.localBalance, `Archive channel[${index}] local balance`);
+    optionalString(record.remoteBalance, `Archive channel[${index}] remote balance`);
+  });
+  payments.forEach((record, index) => {
+    requiredString(record.status, `Archive payment[${index}] status`);
+    optionalString(record.amount, `Archive payment[${index}] amount`);
+  });
+  invoices.forEach((record, index) => {
+    requiredString(record.status, `Archive invoice[${index}] status`);
+    optionalString(record.amount, `Archive invoice[${index}] amount`);
+  });
+}
+
+function parseManifest(value: unknown): BackupManifest {
+  if (!isRecord(value)) throw new Error("Not a FiberContinuity archive.");
+  if (value.format !== "fiber-continuity") throw new Error("Not a FiberContinuity archive.");
+  if (value.formatVersion !== 2) {
+    if (value.formatVersion === 1) {
+      throw new Error("Legacy FiberContinuity v1 archives are intentionally blocked because their metadata was not authenticated. Recreate the backup with v2.");
+    }
+    throw new Error("Unsupported FiberContinuity archive format version.");
+  }
+  const createdAt = requiredString(value.createdAt, "Recovery archive creation timestamp");
+  if (Number.isNaN(Date.parse(createdAt))) throw new Error("Recovery archive has an invalid creation timestamp.");
+  if (!isRecord(value.payload)) throw new Error("Recovery archive cryptographic payload metadata is missing.");
+
+  const payload = value.payload;
+  if (payload.cipher !== "AES-GCM-256" || payload.kdf !== "PBKDF2-SHA256" || payload.aadVersion !== 1) {
+    throw new Error("Unsupported FiberContinuity cryptographic parameters.");
+  }
+  if (!Number.isInteger(payload.iterations) || (payload.iterations as number) < 100_000 || (payload.iterations as number) > 2_000_000) {
+    throw new Error("Unsupported FiberContinuity PBKDF2 iteration count.");
+  }
+  const digest = requiredString(payload.ciphertextDigest, "Recovery archive ciphertext digest", 64);
+  if (!/^[0-9a-f]{64}$/i.test(digest)) throw new Error("Recovery archive has an invalid ciphertext digest.");
+
+  const salt = requiredString(payload.salt, "Recovery archive salt", 128);
+  const iv = requiredString(payload.iv, "Recovery archive IV", 128);
+  if (base64ToBytesStrict(salt, "Recovery archive salt").length !== 16) {
+    throw new Error("Recovery archive salt must decode to 16 bytes.");
+  }
+  if (base64ToBytesStrict(iv, "Recovery archive IV").length !== 12) {
+    throw new Error("Recovery archive IV must decode to 12 bytes.");
   }
 
-  const assertUniqueRecords = (records: Array<{ id: string }>, label: string) => {
-    if (records.some((record) => !record || typeof record.id !== "string" || record.id.length === 0)) {
-      throw new Error(`Archive recovery snapshot contains an invalid ${label} identifier.`);
-    }
-    if (new Set(records.map((record) => record.id)).size !== records.length) {
-      throw new Error(`Archive recovery snapshot contains duplicate ${label} identifiers.`);
-    }
-  };
-  assertUniqueRecords(snapshot.channels, "channel");
-  assertUniqueRecords(snapshot.payments, "payment");
-  assertUniqueRecords(snapshot.invoices, "invoice");
-  if (snapshot.channels.some((record) => typeof record.state !== "string") ||
-      snapshot.payments.some((record) => typeof record.status !== "string") ||
-      snapshot.invoices.some((record) => typeof record.status !== "string")) {
-    throw new Error("Archive recovery snapshot contains invalid record state/status values.");
-  }
+  return value as unknown as BackupManifest;
 }
 
 export async function createArchive(
@@ -61,10 +143,12 @@ export async function createArchive(
   password: string
 ): Promise<RecoveryArchive> {
   assertSnapshot(snapshot);
+  if (!(nativeBackup instanceof Uint8Array)) throw new Error("Native backup must be a Uint8Array.");
+  if (nativeBackup.byteLength > MAX_NATIVE_BACKUP_BYTES) {
+    throw new Error(`Native backup exceeds the browser archive limit of ${Math.floor(MAX_NATIVE_BACKUP_BYTES / 1024 / 1024)} MiB.`);
+  }
   const createdAt = new Date().toISOString();
 
-  // A first immutable header is enough to bind all security-relevant public parameters.
-  // Salt/IV are generated by encryptBytes and are self-protecting: tampering prevents decryption.
   const manifestBase: BackupManifest = {
     format: "fiber-continuity",
     formatVersion: 2,
@@ -87,6 +171,9 @@ export async function createArchive(
   };
   const plain = utf8(JSON.stringify(envelope));
   const encrypted = await encryptBytes(plain, password, publicAad(manifestBase), manifestBase.payload.iterations);
+  if (encrypted.ciphertext.byteLength > MAX_CIPHERTEXT_BYTES) {
+    throw new Error("Encrypted recovery payload exceeds the supported browser archive size limit.");
+  }
 
   const manifest: BackupManifest = {
     ...manifestBase,
@@ -99,44 +186,22 @@ export async function createArchive(
     }
   };
 
-  return {
-    manifest,
-    ciphertext: bytesToBase64(encrypted.ciphertext)
-  };
+  return { manifest, ciphertext: bytesToBase64(encrypted.ciphertext) };
 }
 
 export async function validateArchive(archive: RecoveryArchive): Promise<void> {
-  if (!archive?.manifest || typeof archive.ciphertext !== "string") {
-    throw new Error("Not a FiberContinuity archive.");
-  }
-  const { manifest } = archive;
-  if (manifest.format !== "fiber-continuity") throw new Error("Not a FiberContinuity archive.");
-  if (manifest.formatVersion !== 2) {
-    if ((manifest as { formatVersion?: number }).formatVersion === 1) {
-      throw new Error("Legacy FiberContinuity v1 archives are intentionally blocked because their metadata was not authenticated. Recreate the backup with v2.");
-    }
-    throw new Error("Unsupported FiberContinuity archive format version.");
-  }
-  if (Number.isNaN(Date.parse(manifest.createdAt))) {
-    throw new Error("Recovery archive has an invalid creation timestamp.");
-  }
-  if (manifest.payload.cipher !== "AES-GCM-256" || manifest.payload.kdf !== "PBKDF2-SHA256" || manifest.payload.aadVersion !== 1) {
-    throw new Error("Unsupported FiberContinuity cryptographic parameters.");
-  }
-  if (!/^[0-9a-f]{64}$/i.test(manifest.payload.ciphertextDigest)) {
-    throw new Error("Recovery archive has an invalid ciphertext digest.");
-  }
-  if (!Number.isInteger(manifest.payload.iterations) || manifest.payload.iterations < 100_000 || manifest.payload.iterations > 2_000_000) {
-    throw new Error("Unsupported FiberContinuity PBKDF2 iteration count.");
-  }
+  if (!isRecord(archive) || typeof archive.ciphertext !== "string") throw new Error("Not a FiberContinuity archive.");
+  const manifest = parseManifest(archive.manifest);
+
   if (archive.ciphertext.length > Math.ceil(MAX_CIPHERTEXT_BYTES * 4 / 3) + 8) {
     throw new Error("Recovery archive exceeds the supported size limit.");
   }
-
-  const bytes = base64ToBytes(archive.ciphertext);
+  const bytes = base64ToBytesStrict(archive.ciphertext, "Recovery archive ciphertext");
   if (bytes.length > MAX_CIPHERTEXT_BYTES) throw new Error("Recovery archive exceeds the supported size limit.");
+  if (bytes.length < 16) throw new Error("Recovery archive ciphertext is too short to contain an AES-GCM authentication tag.");
+
   const digest = await sha256Hex(bytes);
-  if (digest !== manifest.payload.ciphertextDigest) {
+  if (digest !== manifest.payload.ciphertextDigest.toLowerCase()) {
     throw new Error("Encrypted payload corruption check failed.");
   }
 }
@@ -147,7 +212,7 @@ export async function decryptArchive(
 ): Promise<{ snapshot: FiberSnapshot; nativeBackup: Uint8Array }> {
   await validateArchive(archive);
   const plain = await decryptBytes(
-    base64ToBytes(archive.ciphertext),
+    base64ToBytesStrict(archive.ciphertext, "Recovery archive ciphertext"),
     password,
     archive.manifest.payload.salt,
     archive.manifest.payload.iv,
@@ -155,20 +220,21 @@ export async function decryptArchive(
     publicAad(archive.manifest)
   );
 
-  let envelope: RecoveryEnvelope;
+  let envelopeValue: unknown;
   try {
-    envelope = JSON.parse(text(plain)) as RecoveryEnvelope;
+    envelopeValue = JSON.parse(text(plain));
   } catch {
     throw new Error("Authenticated recovery payload is not valid JSON.");
   }
-  if (envelope.schemaVersion !== 1 || typeof envelope.nativeBackup !== "string") {
+  if (!isRecord(envelopeValue) || envelopeValue.schemaVersion !== 1 || typeof envelopeValue.nativeBackup !== "string") {
     throw new Error("Unsupported authenticated recovery payload schema.");
   }
-  assertSnapshot(envelope.snapshot);
-  return {
-    snapshot: envelope.snapshot,
-    nativeBackup: base64ToBytes(envelope.nativeBackup)
-  };
+  assertSnapshot(envelopeValue.snapshot);
+  const nativeBackup = base64ToBytesStrict(envelopeValue.nativeBackup, "Authenticated native backup");
+  if (nativeBackup.byteLength > MAX_NATIVE_BACKUP_BYTES) {
+    throw new Error("Authenticated native backup exceeds the supported browser size limit.");
+  }
+  return { snapshot: envelopeValue.snapshot, nativeBackup };
 }
 
 export function parseArchive(json: string): RecoveryArchive {
@@ -181,9 +247,7 @@ export function parseArchive(json: string): RecoveryArchive {
   } catch {
     throw new Error("Recovery archive is not valid JSON.");
   }
-  const archive = value as Partial<RecoveryArchive> & { manifest?: { format?: unknown } };
-  if (archive?.manifest?.format !== "fiber-continuity" || typeof archive.ciphertext !== "string") {
-    throw new Error("Not a FiberContinuity archive.");
-  }
-  return archive as RecoveryArchive;
+  if (!isRecord(value) || typeof value.ciphertext !== "string") throw new Error("Not a FiberContinuity archive.");
+  parseManifest(value.manifest);
+  return value as unknown as RecoveryArchive;
 }

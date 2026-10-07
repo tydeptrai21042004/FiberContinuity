@@ -1,6 +1,6 @@
 # FiberContinuity
 
-> **v0.3.0 reviewer-ready demo** — production-style recovery console, deterministic fail-closed scenario lab, target race protection, and machine-readable evidence export. The deployed demo remains intentionally adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
+> **v0.3.1 reviewer-ready demo** — production-style recovery console, deterministic fail-closed scenario lab, target race protection, and machine-readable evidence export. The deployed demo remains intentionally adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
 
 Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
 
@@ -9,9 +9,9 @@ Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
 
 It deliberately does **not** invent a second channel-recovery protocol or manipulate undocumented Fiber database keys. The continuity engine treats the native Fiber backup as opaque and requires a reviewed adapter/native recovery hook for the actual runtime.
 
-## What v0.2 hardens
+## What v0.3.1 hardens
 
-The v0.2 archive and restore flow addresses the main safety gaps in the first prototype:
+The v0.3.1 archive and restore flow addresses the main safety gaps in the first prototype:
 
 - the Fiber snapshot and native backup are encrypted **together** inside AES-256-GCM;
 - node/channel/payment/invoice metadata is no longer exposed in the public archive header;
@@ -23,7 +23,11 @@ The v0.2 archive and restore flow addresses the main safety gaps in the first pr
 - verification compares channel state/peer/balances and payment/invoice status/amount when the adapter can observe them;
 - unsupported payment/invoice visibility is reported as **UNKNOWN**, never a false PASS;
 - restore waits for an observable stable state before issuing the health report;
-- native restore/restart exceptions trigger a best-effort in-memory rollback checkpoint; and
+- unexpected rollback-checkpoint export failures abort before mutation; only an explicit unsupported-capability signal may continue without rollback;
+- native restore/restart/stabilization exceptions trigger a best-effort in-memory rollback checkpoint;
+- full-visibility payment/invoice mismatches are hard verification failures;
+- `FiberJsAdapter` refuses to manufacture node/channel identifiers when upstream identity fields are missing;
+- malformed archive metadata/base64/record shapes are rejected before recovery; and
 - browser bootstrap requires explicit secure-WebSocket Fiber bootnodes instead of inheriting TCP defaults.
 
 ## Architecture

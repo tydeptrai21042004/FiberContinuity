@@ -2,7 +2,7 @@
 
 FiberContinuity handles recovery material. The code therefore defaults to refusing ambiguous destructive actions rather than interpreting ambiguity as success.
 
-## v0.2 invariants
+## v0.3.1 invariants
 
 1. Native backup bytes and the pre-recovery snapshot are encrypted together before export.
 2. Node/channel/payment/invoice metadata is not present in the public v2 archive header.
@@ -14,8 +14,11 @@ FiberContinuity handles recovery material. The code therefore defaults to refusi
 8. `review` and `blocked` compatibility decisions both block restore.
 9. A target that may contain unrelated or newer state is not overwritten unless the adapter can explicitly prove the operation safe.
 10. Unsupported record visibility produces `UNKNOWN`, not a false verification PASS.
-11. Native restore/restart exceptions trigger a best-effort rollback to the target bytes captured immediately before mutation when such export succeeds.
-12. FiberContinuity never directly edits undocumented Fiber database keys/channel-state records.
+11. Unexpected rollback-checkpoint export failures abort restore before mutation; only an explicit unsupported-capability condition may proceed without rollback.
+12. Native restore, restart, or stabilization exceptions trigger a best-effort rollback to the target bytes captured immediately before mutation when such export succeeds.
+13. Empty targets with unavailable recovery visibility are not inferred safe from record counts alone.
+14. Full-coverage payment/invoice mismatches are hard verification failures.
+15. FiberContinuity never directly edits undocumented Fiber database keys/channel-state records.
 
 ## Password encryption
 
@@ -47,7 +50,7 @@ AND compatibility == supported
 AND targetSafety == safe
 ```
 
-A same-node target that differs from the backup can represent newer live state. Core fallback policy therefore marks it `review` instead of treating matching node identity as sufficient authorization to overwrite it.
+A same-node target that differs from the backup can represent newer live state. Core fallback policy therefore marks it `review` instead of treating matching node identity as sufficient authorization to overwrite it. An empty-looking target is also `review` when any recovery record family is unavailable, because emptiness cannot be proven from incomplete visibility.
 
 Live adapters should implement `assessRestoreTarget()` using runtime-specific knowledge such as a dedicated empty recovery profile, stopped node lifecycle, or another reviewed condition.
 

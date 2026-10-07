@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64, utf8 } from "./encoding";
+import { base64ToBytesStrict, bytesToBase64, utf8 } from "./encoding";
 
 export const DEFAULT_KDF_ITERATIONS = 310_000;
 export const MIN_KDF_ITERATIONS = 100_000;
@@ -76,8 +76,8 @@ export async function decryptBytes(
   iterations: number,
   additionalData?: Uint8Array
 ): Promise<Uint8Array> {
-  const salt = base64ToBytes(saltB64);
-  const iv = base64ToBytes(ivB64);
+  const salt = base64ToBytesStrict(saltB64, "Recovery archive salt");
+  const iv = base64ToBytesStrict(ivB64, "Recovery archive IV");
   if (salt.length !== 16 || iv.length !== 12) {
     throw new Error("Recovery archive has invalid cryptographic parameters.");
   }

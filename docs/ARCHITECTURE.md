@@ -13,6 +13,7 @@ FiberContinuity
     ├─ consistent checkpoint
     ├─ authenticated encrypted archive
     ├─ fail-closed preflight
+    ├─ fail-closed rollback checkpoint
     ├─ native restore / rollback-on-exception
     ├─ restart + stabilization
     └─ before/after verification
@@ -98,7 +99,9 @@ VERSION POLICY ─ review/blocked ─────> BLOCKED
 TARGET SAFETY ─ review/blocked ──────> BLOCKED
       │
       ▼
-BEST-EFFORT ROLLBACK CHECKPOINT
+ROLLBACK CHECKPOINT
+      │ operational failure → BLOCKED
+      │ unsupported → continue without rollback
       │
       ▼
 NATIVE RESTORE
@@ -106,10 +109,13 @@ NATIVE RESTORE
       ├──────────────────────────────> ROLLBACK ATTEMPT
       ▼
 RESTART / RECONNECT
+      │ exception
+      ├──────────────────────────────> ROLLBACK ATTEMPT
       │
       ▼
 STABILIZATION / RECONCILIATION WAIT
-      │
+      │ exception
+      ├──────────────────────────────> ROLLBACK ATTEMPT
       ▼
 POST-RESTORE SNAPSHOT
       │
@@ -129,7 +135,7 @@ Every snapshot declares coverage for channels, payments, and invoices:
 - `metadata`: compare only fields the adapter deliberately exposes; or
 - `unavailable`: report `UNKNOWN` rather than manufacturing a PASS.
 
-For the deterministic demo all three record families are `full`. The current conservative `FiberJsAdapter` uses channel `metadata` and marks payment/invoice history `unavailable` until a pinned upstream integration exposes those records explicitly.
+For the deterministic demo all three record families are `full`. The current conservative `FiberJsAdapter` parses Fiber 0.9.x channel identity, nested `state_name`, and balances when present; channel coverage is `full` only when both balances are actually observable, otherwise it falls back to `metadata`. Payment/invoice history remains `unavailable` until a pinned upstream integration exposes those records explicitly.
 
 ## Why no backend is required
 

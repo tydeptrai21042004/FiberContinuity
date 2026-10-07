@@ -1,30 +1,30 @@
-FiberContinuity v0.3.0 validation
+FiberContinuity v0.3.1 validation
 
 What changed
 ------------
-- Production-style reviewer dashboard and responsive UI.
-- Guided one-click recovery demonstration.
-- Deterministic safety scenario lab: state loss, stale same-identity state, foreign live node, network mismatch.
-- Machine-readable evidence bundle export without recovery password/decrypted native backup.
-- Archive corruption validation during import and pre-read browser file-size guard.
-- Pre-mutation target race guard after fail-closed preflight.
-- Core recovery-password minimum enforcement.
-- Recovery stabilization option validation.
-- Hardened demo backup JSON validation.
-- Expanded edge-case regression tests.
+- Same-identity empty targets no longer become SAFE when payment/invoice or other recovery visibility is unavailable.
+- Rollback checkpoint export is fail-closed: unexpected operational failures abort before mutation; only UnsupportedCapabilityError may continue without automatic rollback.
+- Recovery exceptions during native restore, restart, or stabilization now attempt to restore the captured pre-mutation checkpoint.
+- Full-visibility payment/invoice mismatches are hard FAIL/UNSAFE results; metadata-only mismatches remain warnings and unavailable visibility remains UNKNOWN.
+- FiberJsAdapter requires real node/channel identifiers and channel state instead of synthesizing "unknown" / "channel-N" identifiers; duplicate channel IDs are rejected.
+- Compatibility matching now parses semantic versions and no longer confuses rc10/rc11 with rc1.
+- Archive validation now checks nested manifest shape, canonical base64, salt/IV lengths, record shapes, duplicate IDs, record-count bounds, and native-backup/browser size limits.
+- Added regression tests for the new fail-closed behavior and FiberJsAdapter inspection rules.
+- Added the repository files previously claimed by FILELIST/README: Node 24 pins, GitHub CI, .gitignore, .env.example, and evidence/runs/.gitkeep.
+- Documentation/roadmap version language is aligned with v0.3.x as the current reviewer-ready reference implementation.
 
 Validation performed in this workspace
 --------------------------------------
-PASS: strict TypeScript check of the changed UI/core dependency graph using local React type stubs.
-PASS: strict compilation of core modules with TypeScript.
-PASS: executable clean path: create backup -> simulate state loss -> preflight -> restore -> HEALTHY.
-PASS: foreign live node is blocked.
-PASS: network identity mismatch is blocked.
-PASS: stale same-identity state is blocked/requires review.
-PASS: short recovery password is rejected by the core API.
-PASS: target mutation between preflight and storage mutation is detected and aborts restore.
-PASS: generated package.json remains valid JSON and Node is pinned to 24.x.
+PASS: strict TypeScript compilation of src/core plus FiberAdapter, DemoFiberAdapter, and FiberJsAdapter with the globally available TypeScript compiler.
+PASS: dependency-free executable security harness: backup -> loss -> preflight -> restore -> HEALTHY.
+PASS: exact rc1 compatibility rule does not accidentally match rc10.
+PASS: full payment mismatch is UNSAFE.
+PASS: FiberJsAdapter parses Fiber 0.9.x nested state_name/balance response shape and reports full channel coverage when appropriate.
+PASS: stabilization failure restores the captured pre-mutation checkpoint.
+PASS: package.json remains valid JSON and is bumped to 0.3.1.
+PASS: 33 Vitest cases are declared across the expanded suite (full Vitest execution still requires dependency installation).
+PASS: CI/runtime files are present and consistently pin Node 24.
 
 Environment limitation
 ----------------------
-A fresh `npm install --no-audit --no-fund` timed out in this sandbox, so the full installed-dependency `npm run build` / Vitest suite could not be executed here. The changed TypeScript dependency graph and executable dependency-free core were validated independently. Run `npm install && npm run build && npm test` in CI/Vercel after pushing.
+A fresh npm dependency resolution timed out in this sandbox, and the sandbox currently exposes Node 22 rather than the repository-required Node 24. Therefore the installed-dependency `npm run check`, Vitest suite, and Vite production build could not be truthfully certified here. GitHub CI is included to run `npm install`, `npm run check`, and `npm run build` under Node 24 after dependencies are resolved. A lockfile should be committed once dependency resolution is available so CI can move to `npm ci`.

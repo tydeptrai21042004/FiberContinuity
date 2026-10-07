@@ -60,7 +60,7 @@ function comparePayments(before: PaymentSnapshot[], after: PaymentSnapshot[], co
   return {
     key: "payments",
     label: "Payment records",
-    status: same ? "pass" : "warn",
+    status: same ? "pass" : coverage === "full" ? "fail" : "warn",
     detail: same ? `${a.length} payment record(s) preserved.` : `Payment-history mismatch (${a.length} before / ${b.length} after). ${diffIds(a, b)}`.trim()
   };
 }
@@ -76,7 +76,7 @@ function compareInvoices(before: InvoiceSnapshot[], after: InvoiceSnapshot[], co
   return {
     key: "invoices",
     label: "Invoice records",
-    status: same ? "pass" : "warn",
+    status: same ? "pass" : coverage === "full" ? "fail" : "warn",
     detail: same ? `${a.length} invoice record(s) preserved.` : `Invoice-history mismatch (${a.length} before / ${b.length} after). ${diffIds(a, b)}`.trim()
   };
 }

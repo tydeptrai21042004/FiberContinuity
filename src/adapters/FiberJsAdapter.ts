@@ -21,16 +21,25 @@ export interface FiberJsAdapterOptions {
   /** Stable network/genesis identity supplied by the host integration. */
   networkIdentity: string;
   recovery?: NativeRecoveryHooks;
-  /** Strongly recommended for live restores; otherwise different-identity targets fail closed. */
+  /** Strongly recommended for live restores; otherwise ambiguous targets fail closed. */
   assessRestoreTarget?: (expected: FiberSnapshot, current: FiberSnapshot) => Promise<RestoreTargetAssessment>;
   /** Optional Fiber-aware reconnect/reconciliation readiness hook. */
   waitForRecoveryStable?: (expected: FiberSnapshot, options: RecoveryStabilityOptions) => Promise<FiberSnapshot>;
 }
 
 type JsonObject = Record<string, unknown>;
-const obj = (value: unknown): JsonObject => (value && typeof value === "object" ? value as JsonObject : {});
+const obj = (value: unknown): JsonObject => (value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {});
 const arr = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
-const str = (value: unknown, fallback = "unknown") => typeof value === "string" ? value : fallback;
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function requiredString(value: unknown, label: string): string {
+  const found = optionalString(value);
+  if (!found) throw new Error(`Fiber inspection failed: ${label} is missing or invalid.`);
+  return found;
+}
 
 export class FiberJsAdapter implements FiberAdapter {
   readonly name = "fiber-js";
@@ -49,29 +58,48 @@ export class FiberJsAdapter implements FiberAdapter {
     const node = obj(nodeRaw);
     const channelsObject = obj(channelsRaw);
     const channelItems = arr(channelsObject.channels ?? channelsRaw);
+    const channels = channelItems.map((raw, i) => {
+      const ch = obj(raw);
+      const stateObject = obj(ch.state);
+      const localBalance = optionalString(ch.local_balance ?? ch.localBalance);
+      const remoteBalance = optionalString(ch.remote_balance ?? ch.remoteBalance);
+      return {
+        id: requiredString(ch.channel_id ?? ch.id, `channel[${i}] identifier`),
+        peer: requiredString(ch.pubkey ?? ch.peer_id, `channel[${i}] peer identity`),
+        state: requiredString(
+          typeof ch.state === "string" ? ch.state : stateObject.state_name ?? ch.state_name,
+          `channel[${i}] state`
+        ),
+        ...(localBalance ? { localBalance } : {}),
+        ...(remoteBalance ? { remoteBalance } : {})
+      };
+    });
+
+    const ids = channels.map((channel) => channel.id);
+    if (new Set(ids).size !== ids.length) {
+      throw new Error("Fiber inspection failed: list_channels returned duplicate channel identifiers.");
+    }
+
+    const channelCoverage = channels.every((channel) => channel.localBalance !== undefined && channel.remoteBalance !== undefined)
+      ? "full" as const
+      : "metadata" as const;
 
     return {
       capturedAt: new Date().toISOString(),
       adapter: this.name,
-      fiberVersion: this.options.version,
+      fiberVersion: this.options.version.trim(),
       network: this.options.network,
-      networkIdentity: this.options.networkIdentity,
-      nodeId: str(node.pubkey ?? node.node_id),
+      networkIdentity: this.options.networkIdentity.trim(),
+      nodeId: requiredString(node.pubkey ?? node.node_id, "node identity"),
       capabilities: {
-        // list_channels exposes identity/peer/state here. Balance field names are deliberately not guessed.
-        channels: "metadata",
+        // Fiber 0.9.x list_channels exposes channel identity/state and normally balances.
+        // Fall back to metadata if a host/runtime omits either balance field.
+        channels: channelCoverage,
         // Payment/invoice history RPC schemas are deliberately not invented by this adapter.
         payments: "unavailable",
         invoices: "unavailable"
       },
-      channels: channelItems.map((raw, i) => {
-        const ch = obj(raw);
-        return {
-          id: str(ch.channel_id ?? ch.id, `channel-${i}`),
-          peer: str(ch.pubkey ?? ch.peer_id, "unknown"),
-          state: str(ch.state, "unknown")
-        };
-      }),
+      channels,
       payments: [],
       invoices: []
     };
@@ -124,9 +152,7 @@ export class FiberJsAdapter implements FiberAdapter {
 
   async waitForRecoveryStable(expected: FiberSnapshot, options: RecoveryStabilityOptions): Promise<FiberSnapshot> {
     if (this.options.waitForRecoveryStable) return this.options.waitForRecoveryStable(expected, options);
-    // Returning inspect() here would pretend reconnect/reconciliation readiness is known.
-    // Let FiberContinuity's generic stability polling run by not exposing this method? Since the
-    // interface is implemented on the class, perform conservative polling of observable channel metadata.
+
     const deadline = Date.now() + options.timeoutMs;
     let previous = "";
     let stable = 0;

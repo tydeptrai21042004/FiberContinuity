@@ -19,6 +19,7 @@ Expected:
 - ciphertext tampering still fails AES-GCM even if the public SHA-256 digest is recomputed;
 - legacy v1 archive restore is rejected;
 - same-ID/wrong-channel-state verification becomes `UNSAFE`;
+- full-coverage payment/invoice mismatches become `UNSAFE`;
 - unavailable record families become `UNKNOWN`/`DEGRADED`;
 - unregistered version pairs remain `review` and cannot restore;
 - a different live target is blocked; and
@@ -63,6 +64,9 @@ Expected: authenticated decryption fails before native restore is invoked.
 - Use an unregistered version pair such as `0.9.0 → 0.9.1`: status is `review`, and restore is blocked.
 - Present a different node identity with existing records: restore is blocked.
 - Present same-identity but different live records without an explicit adapter safety hook: restore requires review instead of overwriting potentially newer state.
+- Present an empty same-identity target with any recovery record family marked `unavailable`: restore still requires review because emptiness is not provable.
+- Make rollback export fail with an operational error: restore must abort before mutation.
+- Make post-restore stabilization fail after a rollback checkpoint is captured: the pre-mutation checkpoint must be restored.
 
 ## E. Real Fiber acceptance milestone
 

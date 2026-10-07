@@ -58,3 +58,34 @@ describe("recovery archive v2", () => {
     await expect(validateArchive(legacy)).rejects.toThrow(/Legacy FiberContinuity v1/i);
   });
 });
+
+describe("archive parser hardening", () => {
+  it("rejects missing payload metadata with a controlled validation error", async () => {
+    const malformed = {
+      manifest: {
+        format: "fiber-continuity",
+        formatVersion: 2,
+        createdAt: new Date().toISOString()
+      },
+      ciphertext: "AA=="
+    } as never;
+    await expect(validateArchive(malformed)).rejects.toThrow(/payload metadata is missing/i);
+  });
+
+  it("rejects malformed base64 before cryptographic operations", async () => {
+    const adapter = new DemoFiberAdapter();
+    const archive = await createArchive(await adapter.inspect(), await adapter.exportNativeBackup(), "very-good-password");
+    const malformed = structuredClone(archive);
+    malformed.manifest.payload.salt = "not/base64";
+    await expect(validateArchive(malformed)).rejects.toThrow(/base64|salt/i);
+  });
+
+  it("rejects invalid nested recovery record shapes", async () => {
+    const adapter = new DemoFiberAdapter();
+    const snapshot = await adapter.inspect();
+    const malformed = structuredClone(snapshot) as unknown as { channels: Array<{ id?: string; state?: unknown }> };
+    malformed.channels[0].state = 123;
+    await expect(createArchive(malformed as never, await adapter.exportNativeBackup(), "very-good-password"))
+      .rejects.toThrow(/channel\[0\] state/i);
+  });
+});
