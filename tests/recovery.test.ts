@@ -209,3 +209,28 @@ describe("additional fail-closed restore guards", () => {
     expect((await adapter.inspect()).channels).toHaveLength(0);
   });
 });
+
+describe("recovery progress telemetry", () => {
+  it("reports real restore stages in execution order", async () => {
+    const adapter = new DemoFiberAdapter();
+    const continuity = new FiberContinuity(adapter);
+    const archive = await continuity.createBackup("very-good-password");
+    adapter.simulateBrowserStateLoss();
+
+    const stages: string[] = [];
+    const report = await continuity.restore(archive, "very-good-password", (event) => stages.push(event.stage));
+
+    expect(report.overall).toBe("healthy");
+    expect(stages).toEqual([
+      "decrypting",
+      "inspecting-target",
+      "preflight",
+      "capturing-rollback",
+      "restoring",
+      "restarting",
+      "stabilizing",
+      "verifying",
+      "complete"
+    ]);
+  });
+});

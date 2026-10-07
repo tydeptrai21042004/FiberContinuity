@@ -7,6 +7,25 @@ import { comparableSnapshot, verifyRecovery } from "./verify";
 
 export interface FiberContinuityOptions extends Partial<RecoveryStabilityOptions> {}
 
+export type RecoveryStage =
+  | "decrypting"
+  | "inspecting-target"
+  | "preflight"
+  | "capturing-rollback"
+  | "restoring"
+  | "restarting"
+  | "stabilizing"
+  | "verifying"
+  | "rolling-back"
+  | "complete";
+
+export interface RecoveryProgressEvent {
+  stage: RecoveryStage;
+  detail: string;
+}
+
+export type RecoveryProgressCallback = (event: RecoveryProgressEvent) => void;
+
 const DEFAULT_STABILITY: RecoveryStabilityOptions = {
   timeoutMs: 5_000,
   pollIntervalMs: 100,
@@ -210,9 +229,10 @@ export class FiberContinuity {
     }
   }
 
-  private async rollbackAfterFailure(rollback: Uint8Array | undefined, failure: unknown): Promise<never> {
+  private async rollbackAfterFailure(rollback: Uint8Array | undefined, failure: unknown, progress?: RecoveryProgressCallback): Promise<never> {
     if (!rollback) throw failure instanceof Error ? failure : new Error(String(failure));
 
+    progress?.({ stage: "rolling-back", detail: "Recovery failed. Restoring the pre-mutation checkpoint." });
     try {
       await this.adapter.restoreNativeBackup(rollback);
       await this.adapter.restartAfterRestore?.();
@@ -225,23 +245,39 @@ export class FiberContinuity {
     throw new Error(`Recovery failed; the previous target checkpoint was restored. Original error: ${errorMessage(failure)}`);
   }
 
-  async restore(archive: RecoveryArchive, password: string): Promise<RecoveryReport> {
+  async restore(archive: RecoveryArchive, password: string, progress?: RecoveryProgressCallback): Promise<RecoveryReport> {
+    progress?.({ stage: "decrypting", detail: "Authenticating and decrypting the recovery archive." });
     const decoded = await decryptArchive(archive, password);
+
+    progress?.({ stage: "inspecting-target", detail: "Inspecting the current recovery target." });
     const target = await this.adapter.inspect();
+
+    progress?.({ stage: "preflight", detail: "Re-running compatibility, network and target-safety gates." });
     const preflight = await this.preflightDecoded(decoded.snapshot, target);
     this.assertPreflightSafe(preflight);
 
+    progress?.({ stage: "capturing-rollback", detail: "Capturing a pre-mutation rollback checkpoint." });
     const rollback = await this.prepareRollback(target);
 
     let after: FiberSnapshot;
     try {
+      progress?.({ stage: "restoring", detail: "Restoring native Fiber recovery state." });
       await this.adapter.restoreNativeBackup(decoded.nativeBackup);
-      await this.adapter.restartAfterRestore?.();
+
+      if (this.adapter.restartAfterRestore) {
+        progress?.({ stage: "restarting", detail: "Restarting the Fiber integration after restore." });
+        await this.adapter.restartAfterRestore();
+      }
+
+      progress?.({ stage: "stabilizing", detail: "Waiting for the observable Fiber state to stabilize." });
       after = await this.waitForStableRecovery(decoded.snapshot);
     } catch (error) {
-      return this.rollbackAfterFailure(rollback, error);
+      return this.rollbackAfterFailure(rollback, error, progress);
     }
 
-    return verifyRecovery(decoded.snapshot, after);
+    progress?.({ stage: "verifying", detail: "Comparing recovered state with the authenticated source snapshot." });
+    const report = verifyRecovery(decoded.snapshot, after);
+    progress?.({ stage: "complete", detail: "Recovery verification completed." });
+    return report;
   }
 }

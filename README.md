@@ -1,6 +1,6 @@
 # FiberContinuity
 
-> **v0.3.1 reviewer-ready demo** — production-style recovery console, deterministic fail-closed scenario lab, target race protection, and machine-readable evidence export. The deployed demo remains intentionally adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
+> **v0.4.0 production-oriented UI reference** — separate backup/recovery/evidence workflows, explicit archive authentication and target preflight, destructive-action confirmation, real restore-stage progress, and an isolated deterministic demo lab. The deployed reference remains adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
 
 Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
 
@@ -9,9 +9,18 @@ Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
 
 It deliberately does **not** invent a second channel-recovery protocol or manipulate undocumented Fiber database keys. The continuity engine treats the native Fiber backup as opaque and requires a reviewed adapter/native recovery hook for the actual runtime.
 
-## What v0.3.1 hardens
+## What v0.4.0 improves
 
-The v0.3.1 archive and restore flow addresses the main safety gaps in the first prototype:
+The v0.3.1 archive and restore hardening remains in place, while v0.4.0 improves how those guarantees are exposed to users:
+The v0.4.0 interface also separates the user jobs that were previously combined on one page:
+
+- **Create backup** — inspect → choose/confirm recovery password → create encrypted archive → save a durable copy;
+- **Recover** — load → integrity-check → authenticate → source/target comparison → SAFE preflight → explicit confirmation → restore → verify;
+- **Evidence** — post-recovery health, machine-readable reports, and reviewer evidence; and
+- **Demo lab** — deterministic failure scenarios isolated from the production-style recovery path.
+
+The restore action stays disabled until the current archive is authenticated and the current target has an explicit SAFE preflight result.
+
 
 - the Fiber snapshot and native backup are encrypted **together** inside AES-256-GCM;
 - node/channel/payment/invoice metadata is no longer exposed in the public archive header;

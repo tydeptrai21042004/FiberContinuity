@@ -24,8 +24,16 @@
 - `src/adapters/FiberJsAdapter.ts`
 - `src/adapters/createFiberJsBrowserNode.ts`
 - `src/browser/files.ts`
+- `src/components/ArchivePicker.tsx`
+- `src/components/ArchiveStatusCard.tsx`
+- `src/components/FlowStepper.tsx`
 - `src/components/HealthReport.tsx`
+- `src/components/OperationBanner.tsx`
+- `src/components/PasswordField.tsx`
+- `src/components/RecoveryProgress.tsx`
+- `src/components/RestoreConfirmDialog.tsx`
 - `src/components/SnapshotCard.tsx`
+- `src/components/StateComparison.tsx`
 - `src/components/StatusPill.tsx`
 - `src/core/archive.ts`
 - `src/core/compatibility.ts`

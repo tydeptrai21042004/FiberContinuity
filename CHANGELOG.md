@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 — Production-oriented recovery UI
+
+- Reorganized the frontend into separate Overview, Create backup, Recover, Evidence, and isolated Demo lab workflows instead of mixing marketing, demo controls, and destructive recovery on one page.
+- Added a production-style recovery wizard: archive integrity → archive authentication → target preflight → explicit destructive confirmation → restore → verification.
+- Restore is now UI-locked until an authenticated archive has an explicit SAFE preflight decision.
+- Added source ↔ target comparison, truthful archive status semantics, saved-backup state, local drag/drop archive import, and progressive disclosure for cryptographic metadata.
+- Removed the default demo password from operational flows; it is filled only inside Demo lab.
+- Added native `<dialog>` confirmation before mutation and a recovery progress timeline driven by real continuity-engine stage callbacks.
+- Added typed operation banners with accessible live-region/error semantics, larger typography/targets, reduced-motion handling, and stronger small-screen layouts.
+- Version display now comes directly from `package.json`, eliminating UI/package version drift.
+- Added a regression test for restore-stage telemetry ordering.
+
 ## 0.3.1 — Fail-closed recovery hardening
 
 - Fixed generic target safety so an empty same-identity target with unavailable recovery visibility requires explicit review instead of being inferred safe.
@@ -13,8 +25,6 @@
 - Added regression tests for fail-closed target visibility, rollback export failures, stabilization rollback, strict archive parsing, semantic-version edge cases, and FiberJsAdapter identity handling.
 - Added Node 24 repository pins, GitHub CI, `.gitignore`, `.env.example`, and evidence-run placeholder files to match documented repository structure.
 - Aligned current-version wording across README, roadmap, security, and validation documentation.
-
-# Changelog
 
 ## 0.3.0 — Reviewer-ready recovery console
 
