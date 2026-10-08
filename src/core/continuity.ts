@@ -101,10 +101,16 @@ export class FiberContinuity {
       throw new ContinuityError("RECOVERY_RESOURCE_UNDEFINED", "Live Fiber recovery requires a stable storage resource ID for cross-tab safety.");
     }
     return withAdapterLock(this.adapter, this.adapter.recoveryResourceId, async () => {
+      if (needNativeLease && this.requireAtomicCheckpoint && !this.adapter.acquireRecoveryLease) {
+        throw new ContinuityError("NATIVE_LEASE_REQUIRED", "Live Fiber operation requires a native exclusive storage lease.");
+      }
       const release = needNativeLease ? await this.adapter.acquireRecoveryLease?.() : undefined;
+      if (needNativeLease && this.requireAtomicCheckpoint && typeof release !== "function") {
+        throw new ContinuityError("NATIVE_LEASE_INVALID", "Native recovery lease did not return its required release function.");
+      }
       try { return await fn(); }
       finally { await release?.(); }
-    });
+    }, this.requireAtomicCheckpoint);
   }
 
   private assertNoInterruptedTransaction(): void {
@@ -154,7 +160,9 @@ export class FiberContinuity {
   private async preflightDecoded(source: FiberSnapshot, target: FiberSnapshot): Promise<RecoveryPreflight> {
     assertSnapshot(source);
     assertSnapshot(target);
-    const compatibility = assessCompatibility(source.fiberVersion, target.fiberVersion);
+    const compatibility = source.adapter === target.adapter
+      ? assessCompatibility(source.fiberVersion, target.fiberVersion)
+      : { status: "blocked" as const, reason: "Source and target recovery adapters differ. No cross-adapter native restore is approved." };
     const networkMatches = knownNetwork(source) && knownNetwork(target) &&
       source.network === target.network && source.networkIdentity === target.networkIdentity;
     let targetSafety = this.adapter.assessRestoreTarget

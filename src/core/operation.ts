@@ -73,12 +73,23 @@ function isMarker(value: unknown): value is TransactionMarker {
 const busyAdapters = new WeakSet<object>();
 const busyResources = new Set<string>();
 
-export async function withAdapterLock<T>(adapter: object, resourceId: string | undefined, run: () => Promise<T>): Promise<T> {
+export async function withAdapterLock<T>(
+  adapter: object,
+  resourceId: string | undefined,
+  run: () => Promise<T>,
+  requireBrowserLock = false
+): Promise<T> {
   if (busyAdapters.has(adapter) || (resourceId && busyResources.has(resourceId))) throw new ContinuityError("OPERATION_CONFLICT", "A backup or recovery operation already owns this Fiber adapter.");
   busyAdapters.add(adapter);
   if (resourceId) busyResources.add(resourceId);
   try {
-    if (resourceId && typeof navigator !== "undefined" && navigator.locks) {
+    // A per-JS-context Set does not protect another tab/worker. Native hosts also
+    // need an independent exclusive storage lease that fences external processes.
+    if (requireBrowserLock && typeof window !== "undefined" &&
+        (!resourceId || typeof navigator === "undefined" || !navigator.locks?.request)) {
+      throw new ContinuityError("BROWSER_LOCK_UNAVAILABLE", "This browser cannot provide the cross-tab Web Lock required for live Fiber recovery. No native operation was started.");
+    }
+    if (resourceId && typeof navigator !== "undefined" && navigator.locks?.request) {
       return await navigator.locks.request(`fiber-continuity:${resourceId}`, { mode: "exclusive", ifAvailable: true }, async (lock) => {
         if (!lock) throw new ContinuityError("OPERATION_CONFLICT", "Another browser tab owns this recovery target.");
         return run();

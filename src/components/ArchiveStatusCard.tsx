@@ -9,13 +9,13 @@ export default function ArchiveStatusCard({
   archive,
   authenticated,
   preflight,
-  saved,
+  localCopyStatus,
   onDownload
 }: {
   archive: RecoveryArchive;
   authenticated: boolean;
   preflight: RecoveryPreflight | null;
-  saved: boolean;
+  localCopyStatus: "not-verified" | "download-requested" | "imported-file";
   onDownload?: () => void;
 }) {
   const safe = Boolean(preflight && preflight.networkMatches && preflight.compatibility.status === "supported" && preflight.targetSafety.status === "safe");
@@ -40,7 +40,7 @@ export default function ArchiveStatusCard({
       <div className="archive-summary">
         <div><span>Format</span><strong>v{archive.manifest.formatVersion}</strong></div>
         <div><span>Encryption</span><strong>{archive.manifest.payload.cipher}</strong></div>
-        <div><span>Local copy</span><strong>{saved ? "Available" : "Not downloaded"}</strong></div>
+        <div><span>Local copy</span><strong>{localCopyStatus === "imported-file" ? "File selected (integrity checked)" : localCopyStatus === "download-requested" ? "Download requested · unverified" : "Not verified"}</strong></div>
       </div>
 
       <details className="technical-details">
@@ -53,7 +53,7 @@ export default function ArchiveStatusCard({
         </dl>
       </details>
 
-      {onDownload && <button type="button" className={saved ? "ghost" : "primary"} onClick={onDownload}>{saved ? "Download another copy" : "Save recovery archive"}</button>}
+      {onDownload && <button type="button" className={localCopyStatus === "download-requested" ? "ghost" : "primary"} onClick={onDownload}>{localCopyStatus === "download-requested" ? "Request another download" : "Download recovery archive"}</button>}
     </section>
   );
 }

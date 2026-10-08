@@ -1,3 +1,11 @@
+## v0.5.0 safety follow-up patch (2026-10-08)
+
+- Verify adapter identity and exact Fiber runtime version after restore; block cross-adapter source/target preflight.
+- Require browser Web Locks for live browser operations and a validated native lease for live write/checkpoint operations.
+- Accept trusted host payment/invoice enumeration only with explicit complete coverage and strict validation; preserve unavailable coverage otherwise.
+- Fix comparison badges, false saved-file success, password lifecycle and evidence state semantics; add regression tests.
+- Production live/native Fiber support remains unimplemented and must not be inferred from a HEALTHY demo report.
+
 ## v0.5.0 — fail-closed recovery hardening (2026-10-08)
 
 - Add transaction journal, resource-level operation locks, cross-tab Web Locks when available.

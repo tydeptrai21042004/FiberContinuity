@@ -1,5 +1,5 @@
 import type { FiberAdapter, RecoveryStabilityOptions } from "./FiberAdapter";
-import type { FiberSnapshot, NetworkName, RestoreTargetAssessment } from "../core/types";
+import type { FiberSnapshot, InvoiceSnapshot, NetworkName, PaymentSnapshot, RecordCoverage, RestoreTargetAssessment } from "../core/types";
 import { UnsupportedCapabilityError } from "../core/errors";
 import { comparableSnapshot } from "../core/verify";
 
@@ -19,6 +19,12 @@ export interface NativeRecoveryHooks {
   supportsSafeRollback?: boolean;
 }
 
+/** Host-verified exhaustive history. Never infer an empty history from a failed/absent RPC. */
+export interface InspectedRecords<T> {
+  coverage: Exclude<RecordCoverage, "unavailable">;
+  records: T[];
+}
+
 export interface FiberJsAdapterOptions {
   fiber: FiberLike;
   /** Must describe the actual running Fiber build. FiberContinuity never assumes a version. */
@@ -31,6 +37,10 @@ export interface FiberJsAdapterOptions {
   /** Upper bound for each node_info/list_channels RPC inspection call, in milliseconds. */
   inspectionTimeoutMs?: number;
   recovery?: NativeRecoveryHooks;
+  /** Optional supported host-specific exhaustive payment inspection, not guessed Fiber RPC methods. */
+  inspectPayments?: () => Promise<InspectedRecords<PaymentSnapshot>>;
+  /** Optional supported host-specific exhaustive invoice inspection, not guessed Fiber RPC methods. */
+  inspectInvoices?: () => Promise<InspectedRecords<InvoiceSnapshot>>;
   /** Strongly recommended for live restores; otherwise ambiguous targets fail closed. */
   assessRestoreTarget?: (expected: FiberSnapshot, current: FiberSnapshot) => Promise<RestoreTargetAssessment>;
   /** Optional Fiber-aware reconnect/reconciliation readiness hook. */
@@ -66,6 +76,29 @@ function requiredString(value: unknown, label: string): string {
   return found;
 }
 
+function validateHistory<T extends PaymentSnapshot | InvoiceSnapshot>(
+  result: unknown, label: string
+): InspectedRecords<T> {
+  const value = obj(result);
+  if ((value.coverage !== "full" && value.coverage !== "metadata") || !Array.isArray(value.records) || value.records.length > 100_000) {
+    throw new Error(`Fiber inspection failed: ${label} host returned incomplete or invalid history coverage.`);
+  }
+  const ids = new Set<string>();
+  const records = (value.records as unknown[]).map((record, index) => {
+    const row = obj(record);
+    const id = requiredString(row.id, `${label}[${index}] id`);
+    const status = requiredString(row.status, `${label}[${index}] status`);
+    if (ids.has(id)) throw new Error(`Fiber inspection failed: duplicate ${label} identifier.`);
+    ids.add(id);
+    const amount = optionalString(row.amount);
+    if (value.coverage === "full" && !amount) {
+      throw new Error(`Fiber inspection failed: ${label}[${index}] has no amount despite full coverage.`);
+    }
+    return { id, status, ...(amount ? { amount } : {}) } as T;
+  });
+  return { coverage: value.coverage as "full" | "metadata", records };
+}
+
 export class FiberJsAdapter implements FiberAdapter {
   readonly name = "fiber-js";
   get recoveryResourceId(): string | undefined { return this.options.recoveryResourceId; }
@@ -95,13 +128,17 @@ export class FiberJsAdapter implements FiberAdapter {
   }
 
   private async invokeBounded(method: string, params: unknown[]): Promise<unknown> {
+    return this.withInspectionDeadline(() => this.options.fiber.invokeCommand(method, params), `Fiber RPC ${method}`);
+  }
+
+  private async withInspectionDeadline<T>(task: () => Promise<T>, label: string): Promise<T> {
     const timeoutMs = this.options.inspectionTimeoutMs ?? 15_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        this.options.fiber.invokeCommand(method, params),
+        Promise.resolve().then(task),
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error(`Fiber RPC ${method} exceeded ${timeoutMs} ms inspection timeout.`)), timeoutMs);
+          timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs} ms inspection timeout.`)), timeoutMs);
         })
       ]);
     } finally {
@@ -110,9 +147,13 @@ export class FiberJsAdapter implements FiberAdapter {
   }
 
   async inspect(): Promise<FiberSnapshot> {
-    const [nodeRaw, channelsRaw] = await Promise.all([
+    const [nodeRaw, channelsRaw, paymentsRaw, invoicesRaw] = await Promise.all([
       this.invokeBounded("node_info", []),
-      this.invokeBounded("list_channels", [{}])
+      this.invokeBounded("list_channels", [{}]),
+      this.options.inspectPayments
+        ? this.withInspectionDeadline(this.options.inspectPayments, "Payment inspection") : Promise.resolve(undefined),
+      this.options.inspectInvoices
+        ? this.withInspectionDeadline(this.options.inspectInvoices, "Invoice inspection") : Promise.resolve(undefined)
     ]);
 
     if (!nodeRaw || typeof nodeRaw !== "object" || Array.isArray(nodeRaw)) {
@@ -149,6 +190,9 @@ export class FiberJsAdapter implements FiberAdapter {
       ? "full" as const
       : "metadata" as const;
 
+    const payments = paymentsRaw === undefined ? undefined : validateHistory<PaymentSnapshot>(paymentsRaw, "payments");
+    const invoices = invoicesRaw === undefined ? undefined : validateHistory<InvoiceSnapshot>(invoicesRaw, "invoices");
+
     return {
       capturedAt: new Date().toISOString(),
       adapter: this.name,
@@ -160,13 +204,13 @@ export class FiberJsAdapter implements FiberAdapter {
         // Fiber 0.9.x list_channels exposes channel identity/state and normally balances.
         // Fall back to metadata if a host/runtime omits either balance field.
         channels: channelCoverage,
-        // Payment/invoice history RPC schemas are deliberately not invented by this adapter.
-        payments: "unavailable",
-        invoices: "unavailable"
+        // Only explicit, complete host hooks can claim records are observable.
+        payments: payments?.coverage ?? "unavailable",
+        invoices: invoices?.coverage ?? "unavailable"
       },
       channels,
-      payments: [],
-      invoices: []
+      payments: payments?.records ?? [],
+      invoices: invoices?.records ?? []
     };
   }
 
@@ -203,7 +247,7 @@ export class FiberJsAdapter implements FiberAdapter {
       }
       return {
         status: "review",
-        reason: "Same-identity target differs from the backup and payment/invoice visibility is unavailable. Supply an explicit target-safety hook."
+        reason: "Same-identity target differs from the backup; local record visibility cannot establish peer/chain safety. Supply an explicit host target-safety hook."
       };
     }
     if (current.channels.length > 0) {
@@ -211,7 +255,7 @@ export class FiberJsAdapter implements FiberAdapter {
     }
     return {
       status: "review",
-      reason: "Different target identity cannot be proven empty because payment/invoice history is unavailable. Supply assessRestoreTarget from the supported host integration."
+      reason: "Different target identity cannot be proven safe for overwrite by local inspection alone. Supply assessRestoreTarget from the supported host integration."
     };
   }
 

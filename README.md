@@ -1,6 +1,6 @@
 # FiberContinuity
 
-> **v0.4.0 production-oriented UI reference** — separate backup/recovery/evidence workflows, explicit archive authentication and target preflight, destructive-action confirmation, real restore-stage progress, and an isolated deterministic demo lab. The deployed reference remains adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
+> **v0.5.0 safety-hardened recovery UI reference** — separate backup/recovery/evidence workflows, explicit archive authentication and target preflight, destructive-action confirmation, real restore-stage progress, and an isolated deterministic demo lab. The deployed reference remains adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
 
 Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
 
@@ -9,7 +9,7 @@ Reviewer walkthrough: [`docs/FUNDING_REVIEW.md`](docs/FUNDING_REVIEW.md).
 
 It deliberately does **not** invent a second channel-recovery protocol or manipulate undocumented Fiber database keys. The continuity engine treats the native Fiber backup as opaque and requires a reviewed adapter/native recovery hook for the actual runtime.
 
-## What v0.4.0 improves
+## What v0.5.0 improves
 
 The v0.3.1 archive and restore hardening remains in place, while v0.4.0 improves how those guarantees are exposed to users:
 The v0.4.0 interface also separates the user jobs that were previously combined on one page:
@@ -20,6 +20,17 @@ The v0.4.0 interface also separates the user jobs that were previously combined 
 - **Demo lab** — deterministic failure scenarios isolated from the production-style recovery path.
 
 The restore action stays disabled until the current archive is authenticated and the current target has an explicit SAFE preflight result.
+
+### Follow-up safety patch (2026-10-08)
+
+- Post-restore checks now fail on adapter or Fiber runtime version mismatch, rather than issuing a false `HEALTHY` result.
+- Native live operation requires a browser Web Lock where running in a browser; unsupported cross-tab locking blocks the operation before native mutation. Live use still requires a **native host lease** fencing external processes.
+- `FiberJsAdapter` may consume explicitly implemented **exhaustive host payment/invoice inspection hooks**, with validated record schemas, duplicate checks and deadlines. Without those hooks coverage remains `unavailable`, and verification stays `DEGRADED`/quarantined.
+- The source/target comparison distinguishes expected differences and informational/unknown counts from PASS. The download button no longer claims that the browser wrote a durable saved file.
+- UI clears passphrase fields after creating a backup or finishing recovery; re-importing and authenticating the on-disk archive is the recommended way to prove the saved file is recoverable.
+
+**No production live Fiber host implementation is bundled.** The application still runs `DemoFiberAdapter`. A real provider must implement approved atomic native checkpoints, restore, native leases, host-specific safety and peer-reconciliation procedures; no browser RPC polling can substitute for these.
+
 
 
 - the Fiber snapshot and native backup are encrypted **together** inside AES-256-GCM;

@@ -99,6 +99,22 @@ export function comparableSnapshot(snapshot: FiberSnapshot): string {
 export function verifyRecovery(before: FiberSnapshot, after: FiberSnapshot): RecoveryReport {
   const checks: RecoveryCheck[] = [
     {
+      key: "adapter",
+      label: "Recovery adapter",
+      status: before.adapter.trim() !== "" && before.adapter === after.adapter ? "pass" : "fail",
+      detail: before.adapter === after.adapter ? `Preserved ${after.adapter}` : `${before.adapter} → ${after.adapter}`
+    },
+    {
+      key: "fiber-version",
+      label: "Fiber runtime version",
+      // Do not assume that a compatible migration was actually performed by the native host.
+      // The current preflight only approves exact-version native restores.
+      status: before.fiberVersion.trim() !== "" && before.fiberVersion === after.fiberVersion ? "pass" : "fail",
+      detail: before.fiberVersion === after.fiberVersion
+        ? `Preserved ${after.fiberVersion}`
+        : `${before.fiberVersion} → ${after.fiberVersion}; restored runtime differs from authenticated source.`
+    },
+    {
       key: "network",
       label: "Network identity",
       status: before.network !== "unknown" && after.network !== "unknown" &&

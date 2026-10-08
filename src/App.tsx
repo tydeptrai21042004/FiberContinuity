@@ -154,18 +154,22 @@ export default function App() {
     setArchiveSaved(false);
     setPreflight(null);
     setReport(null);
+    // A retained passphrase is not required to download the encrypted archive.
+    setPassword("");
+    setConfirmPassword("");
     setNotice({
       kind: "warning",
       title: "Encrypted archive created — save it before relying on it",
-      detail: "The archive exists only in this browser session until you download a copy. Keep the recovery password separately."
+      detail: "The encrypted archive exists only in this session. The passphrase fields were cleared; retain the password separately, download the file, then re-import and authenticate it."
     });
   });
 
   function saveArchive() {
     if (!archive) return;
     downloadJson(`fiber-continuity-${Date.now()}.fcr.json`, archive);
+    // A browser download click cannot prove that a durable file was saved.
     setArchiveSaved(true);
-    setNotice({ kind: "success", title: "Archive download requested", detail: "Your browser controls the final save location. Re-import the saved file from Recover if you want to verify that copy." });
+    setNotice({ kind: "warning", title: "Archive download requested — local copy not verified", detail: "Check that the file exists on disk, then re-import it and authenticate it with your password before relying on this backup." });
   }
 
   async function importArchive(file: File) {
@@ -224,14 +228,22 @@ export default function App() {
     if (!archiveAuthenticated) throw new Error("Authenticate the recovery archive first.");
     if (!safe || !preflight) throw new Error("Run preflight and obtain an explicit SAFE decision before restoring.");
     setRecoveryStage("decrypting");
-    const next = await continuity.restore(archive, password, (event) => setRecoveryStage(event.stage));
-    setReport(next);
-    setPreflight(null);
-    await refresh();
-    setNotice(next.overall === "healthy"
-      ? { kind: "success", title: "Recovery verified — HEALTHY", detail: "The recovered observable Fiber state matches the authenticated recovery source." }
-      : { kind: "warning", title: "Recovery not fully verified — target quarantined", detail: "Do not operate on this restored state until all checks are complete and an upstream recovery review has cleared it." });
-    setView("evidence");
+    try {
+      const next = await continuity.restore(archive, password, (event) => setRecoveryStage(event.stage));
+      setReport(next);
+      setPreflight(null);
+      await refresh();
+      setNotice(next.overall === "healthy"
+        ? { kind: "success", title: "Recovery verified — HEALTHY", detail: "The recovered observable Fiber state matches the authenticated recovery source. This demo does not establish live peer safety." }
+        : { kind: "warning", title: "Recovery not fully verified — target quarantined", detail: "Do not operate on this restored state until all checks are complete and an upstream recovery review has cleared it." });
+      setView("evidence");
+    } finally {
+      setPassword("");
+      setConfirmPassword("");
+      setArchiveAuthenticated(false);
+      setArchiveSource(null);
+      setPreflight(null);
+    }
   });
 
   const applyFault = () => run(`Applying ${scenarioCopy[scenario].title.toLowerCase()}…`, async () => {
@@ -247,6 +259,7 @@ export default function App() {
   const guidedDemo = () => run("Running guided recovery demonstration…", async () => {
     setPassword(DEMO_PASSWORD);
     setConfirmPassword(DEMO_PASSWORD);
+    try {
     const nextArchive = await continuity.createBackup(DEMO_PASSWORD);
     setArchive(nextArchive);
     setArchiveOrigin("created");
@@ -268,6 +281,11 @@ export default function App() {
     setNotice(nextReport.overall === "healthy"
       ? { kind: "success", title: "Guided demo complete — HEALTHY", detail: "Backup → simulated loss → authenticated preflight → restore → verification completed." }
       : { kind: "warning", title: "Guided demo requires recovery review", detail: "The restored state remains quarantined; review checks before further operations." });
+    } finally {
+    setPassword("");
+    setConfirmPassword("");
+    setArchiveAuthenticated(false);
+    }
   });
 
   const reset = () => run("Resetting reference environment…", async () => {
@@ -302,7 +320,7 @@ export default function App() {
       generatedAt: new Date().toISOString(),
       application: { name: "FiberContinuity", version: APP_VERSION, mode: "deterministic-demo" },
       hasArchive: Boolean(archive),
-      archiveAuthenticated,
+      archiveAuthenticated: archiveAuthenticated || Boolean(report),
       source: summarize(archiveSource),
       preflight: preflight ? {
         networkMatches: preflight.networkMatches,
@@ -317,7 +335,7 @@ export default function App() {
       currentTarget: summarize(snapshot),
       guarantees: {
         referenceSimulationOnly: true,
-        archivePayloadAuthenticated: archiveAuthenticated,
+        archivePayloadAuthenticated: archiveAuthenticated || Boolean(report),
         independentExternalPeerSafetyNotEstablished: true
       }
     };
@@ -326,9 +344,9 @@ export default function App() {
 
   const backupSteps = [
     { label: "Inspect", detail: snapshot ? "Current state visible" : "Loading", state: snapshot ? "done" : "active" },
-    { label: "Password", detail: passwordConfirmed ? "Confirmed" : "Create a passphrase", state: passwordConfirmed ? "done" : snapshot ? "active" : "pending" },
+    { label: "Password", detail: archiveOrigin === "created" ? "Used, then cleared" : passwordConfirmed ? "Confirmed" : "Create a passphrase", state: archiveOrigin === "created" || passwordConfirmed ? "done" : snapshot ? "active" : "pending" },
     { label: "Create", detail: archiveOrigin === "created" ? "Encrypted archive ready" : "Pending", state: archiveOrigin === "created" ? "done" : passwordConfirmed ? "active" : "pending" },
-    { label: "Save", detail: archiveOrigin === "created" && archiveSaved ? "Download requested" : "Keep an offline copy", state: archiveOrigin === "created" && archiveSaved ? "done" : archiveOrigin === "created" ? "active" : "pending" }
+    { label: "Save", detail: archiveOrigin === "created" && archiveSaved ? "Verify the saved file" : "Keep an offline copy", state: archiveOrigin === "created" ? "active" : "pending" }
   ] as const;
 
   const recoverySteps = [
@@ -387,7 +405,7 @@ export default function App() {
               </div>
 
               <section className="panel">
-                <div className="panel-title"><div><span>LIVE</span><div><h2>Current recovery target</h2><p>Observable state used by fail-closed target safety and post-restore verification.</p></div></div><button disabled={busy} onClick={() => void run("Refreshing current recovery target…", async () => { await refresh(); setNotice({ kind: "success", title: "Current target refreshed" }); })}>Refresh</button></div>
+                <div className="panel-title"><div><span>DEMO</span><div><h2>Current recovery target</h2><p>Simulated state used by fail-closed target safety and post-restore verification.</p></div></div><button disabled={busy} onClick={() => void run("Refreshing current recovery target…", async () => { await refresh(); setNotice({ kind: "success", title: "Current target refreshed" }); })}>Refresh</button></div>
                 <SnapshotCard snapshot={snapshot} />
               </section>
 
@@ -422,11 +440,11 @@ export default function App() {
                 <section className="panel">
                   <div className="panel-title"><div><span>03</span><div><h2>Save recovery archive</h2><p>Creating an archive in memory is not the same as having a durable backup.</p></div></div></div>
                   {archive && archiveOrigin === "created" ? (
-                    <ArchiveStatusCard archive={archive} authenticated={archiveAuthenticated} preflight={preflight} saved={archiveSaved} onDownload={saveArchive} />
+                    <ArchiveStatusCard archive={archive} authenticated={archiveAuthenticated} preflight={preflight} localCopyStatus={archiveSaved ? "download-requested" : "not-verified"} onDownload={saveArchive} />
                   ) : (
                     <div className="empty-state"><div className="empty-icon">◆</div><div><strong>No newly-created archive yet</strong><p>Create an encrypted archive to enable local download.</p></div></div>
                   )}
-                  {archiveOrigin === "created" && archiveSaved && <div className="success-completion"><span>✓</span><div><strong>Archive download requested</strong><p>Keep the recovery password somewhere separate. Re-import the saved file from Recover to verify that local copy.</p></div></div>}
+                  {archiveOrigin === "created" && archiveSaved && <div className="inline-callout neutral"><strong>Download not verified</strong><p>Confirm the saved file exists, then re-import and authenticate it. Do not treat a requested download as durable backup evidence.</p></div>}
                 </section>
               </div>
             </>
@@ -442,8 +460,8 @@ export default function App() {
                   <div className="panel-title"><div><span>01</span><div><h2>Select recovery archive</h2><p>Structure and corruption checks run locally before the encrypted payload is opened.</p></div></div></div>
                   {!archive ? <ArchivePicker disabled={busy} onFile={(file) => void importArchive(file)} /> : (
                     <>
-                      <ArchiveStatusCard archive={archive} authenticated={archiveAuthenticated} preflight={preflight} saved={archiveSaved} />
-                      <div className="split-actions"><ArchivePicker disabled={busy} onFile={(file) => void importArchive(file)} /><button type="button" className="ghost" disabled={busy} onClick={() => { setArchive(null); setArchiveOrigin(null); setArchiveAuthenticated(false); setArchiveSource(null); setPreflight(null); setPassword(""); setConfirmPassword(""); setRecoveryStage(null); }}>Clear archive</button></div>
+                      <ArchiveStatusCard archive={archive} authenticated={archiveAuthenticated} preflight={preflight} localCopyStatus={archiveOrigin === "imported" ? "imported-file" : archiveSaved ? "download-requested" : "not-verified"} />
+                      <div className="split-actions"><ArchivePicker disabled={busy} onFile={(file) => void importArchive(file)} /><button type="button" className="ghost" disabled={busy} onClick={() => { setArchive(null); setArchiveOrigin(null); setArchiveSaved(false); setArchiveAuthenticated(false); setArchiveSource(null); setPreflight(null); setReport(null); setPassword(""); setConfirmPassword(""); setRecoveryStage(null); }}>Clear archive</button></div>
                     </>
                   )}
                 </section>
