@@ -193,7 +193,8 @@ describe("additional fail-closed restore guards", () => {
       invoices: []
     };
     const target = new RollbackExportFailureTarget(targetSnapshot);
-    const continuity = new FiberContinuity(target);
+    // Explicitly exercise the legacy test-only optimistic checkpoint fallback.
+    const continuity = new FiberContinuity(target, { requireAtomicCheckpoint: false });
 
     await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/rollback checkpoint.*disk read failed/i);
     expect(target.restored).toBe(false);

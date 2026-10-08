@@ -1,10 +1,12 @@
 export class ContinuityError extends Error {
   readonly code: string;
+  readonly recoveryUnsafe: boolean;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, recoveryUnsafe = false) {
     super(message);
     this.name = "ContinuityError";
     this.code = code;
+    this.recoveryUnsafe = recoveryUnsafe;
   }
 }
 

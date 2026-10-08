@@ -38,6 +38,9 @@ const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export class DemoFiberAdapter implements FiberAdapter {
   readonly name = "demo-fiber-0.9.1";
+  readonly supportsSafeRollback: boolean = true;
+  readonly checkpointSupported = true;
+  readonly readinessSupported = true;
   private state: DemoState = clone(INITIAL);
 
   private snapshotFrom(state: DemoState): FiberSnapshot {

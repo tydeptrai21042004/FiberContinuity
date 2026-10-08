@@ -9,8 +9,14 @@ export interface FiberLike {
 
 export interface NativeRecoveryHooks {
   exportBackup(): Promise<Uint8Array>;
+  /** Same-point-in-time snapshot + bytes, provided by native integration. */
+  createCheckpoint?(): Promise<{ snapshot: FiberSnapshot; nativeBackup: Uint8Array }>;
   restoreBackup(data: Uint8Array): Promise<void>;
   restartAfterRestore?(): Promise<void>;
+  /** Must protect the complete native restoration workflow against external workers/processes. */
+  acquireExclusiveRecoveryLease?(): Promise<() => void | Promise<void>>;
+  /** Only set when the upstream runtime guarantees safe rollback of restored channel state. */
+  supportsSafeRollback?: boolean;
 }
 
 export interface FiberJsAdapterOptions {
@@ -20,6 +26,10 @@ export interface FiberJsAdapterOptions {
   network: NetworkName;
   /** Stable network/genesis identity supplied by the host integration. */
   networkIdentity: string;
+  /** Persistent IndexedDB/storage profile name. Must be stable and unique per target. */
+  recoveryResourceId?: string;
+  /** Upper bound for each node_info/list_channels RPC inspection call, in milliseconds. */
+  inspectionTimeoutMs?: number;
   recovery?: NativeRecoveryHooks;
   /** Strongly recommended for live restores; otherwise ambiguous targets fail closed. */
   assessRestoreTarget?: (expected: FiberSnapshot, current: FiberSnapshot) => Promise<RestoreTargetAssessment>;
@@ -29,7 +39,22 @@ export interface FiberJsAdapterOptions {
 
 type JsonObject = Record<string, unknown>;
 const obj = (value: unknown): JsonObject => (value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {});
-const arr = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+function parseChannelList(value: unknown): unknown[] {
+  // A changed/failed RPC must never be interpreted as "zero channels".
+  const response = Array.isArray(value) ? value : obj(value).channels;
+  if (!Array.isArray(response)) throw new Error("Fiber inspection failed: list_channels response shape is invalid; channel coverage cannot be established.");
+  const wrapper = obj(value);
+  if (wrapper.error || wrapper.has_more === true || wrapper.hasMore === true ||
+      wrapper.next_cursor || wrapper.nextCursor || wrapper.next_page || wrapper.nextPage) {
+    throw new Error("Fiber inspection failed: list_channels is incomplete, paginated or contains an RPC error.");
+  }
+  const total = wrapper.total_count ?? wrapper.totalCount;
+  if (total !== undefined && (!Number.isSafeInteger(total) || (total as number) < response.length || (total as number) > response.length)) {
+    throw new Error("Fiber inspection failed: reported channel total does not equal enumerated records.");
+  }
+  if (response.length > 100_000) throw new Error("Fiber inspection failed: channel list exceeds safe inspection limits.");
+  return response;
+}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
@@ -43,22 +68,62 @@ function requiredString(value: unknown, label: string): string {
 
 export class FiberJsAdapter implements FiberAdapter {
   readonly name = "fiber-js";
+  get recoveryResourceId(): string | undefined { return this.options.recoveryResourceId; }
+  get supportsSafeRollback(): boolean { return this.options.recovery?.supportsSafeRollback === true; }
+  get readinessSupported(): boolean { return typeof this.options.waitForRecoveryStable === "function"; }
+  get checkpointSupported(): boolean { return typeof this.options.recovery?.createCheckpoint === "function"; }
+  async createRecoveryCheckpoint() {
+    if (!this.options.recovery?.createCheckpoint) {
+      throw new UnsupportedCapabilityError("Live Fiber recovery requires a consistent native snapshot/checkpoint hook.");
+    }
+    return this.options.recovery.createCheckpoint();
+  }
+  async acquireRecoveryLease(): Promise<() => void | Promise<void>> {
+    if (!this.options.recovery?.acquireExclusiveRecoveryLease) {
+      throw new UnsupportedCapabilityError("Live Fiber recovery requires an upstream-exclusive storage lease.");
+    }
+    return this.options.recovery.acquireExclusiveRecoveryLease();
+  }
 
   constructor(private readonly options: FiberJsAdapterOptions) {
     if (!options.version.trim()) throw new Error("FiberJsAdapter requires the actual running Fiber version.");
     if (!options.networkIdentity.trim()) throw new Error("FiberJsAdapter requires a stable network identity.");
+    const ms = options.inspectionTimeoutMs ?? 15_000;
+    if (!Number.isInteger(ms) || ms < 250 || ms > 120_000) {
+      throw new Error("Fiber RPC inspection timeout must be between 250 and 120000 ms.");
+    }
+  }
+
+  private async invokeBounded(method: string, params: unknown[]): Promise<unknown> {
+    const timeoutMs = this.options.inspectionTimeoutMs ?? 15_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.options.fiber.invokeCommand(method, params),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(`Fiber RPC ${method} exceeded ${timeoutMs} ms inspection timeout.`)), timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   async inspect(): Promise<FiberSnapshot> {
     const [nodeRaw, channelsRaw] = await Promise.all([
-      this.options.fiber.invokeCommand("node_info", []),
-      this.options.fiber.invokeCommand("list_channels", [{}])
+      this.invokeBounded("node_info", []),
+      this.invokeBounded("list_channels", [{}])
     ]);
 
+    if (!nodeRaw || typeof nodeRaw !== "object" || Array.isArray(nodeRaw)) {
+      throw new Error("Fiber inspection failed: node_info response is invalid.");
+    }
     const node = obj(nodeRaw);
-    const channelsObject = obj(channelsRaw);
-    const channelItems = arr(channelsObject.channels ?? channelsRaw);
+    const channelItems = parseChannelList(channelsRaw);
     const channels = channelItems.map((raw, i) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error(`Fiber inspection failed: channel[${i}] is not a valid object.`);
+      }
       const ch = obj(raw);
       const stateObject = obj(ch.state);
       const localBalance = optionalString(ch.local_balance ?? ch.localBalance);
@@ -151,23 +216,9 @@ export class FiberJsAdapter implements FiberAdapter {
   }
 
   async waitForRecoveryStable(expected: FiberSnapshot, options: RecoveryStabilityOptions): Promise<FiberSnapshot> {
-    if (this.options.waitForRecoveryStable) return this.options.waitForRecoveryStable(expected, options);
-
-    const deadline = Date.now() + options.timeoutMs;
-    let previous = "";
-    let stable = 0;
-    let latest = await this.inspect();
-    while (Date.now() <= deadline) {
-      const fingerprint = JSON.stringify({
-        nodeId: latest.nodeId,
-        channels: [...latest.channels].sort((a, b) => a.id.localeCompare(b.id))
-      });
-      stable = fingerprint === previous ? stable + 1 : 1;
-      if (stable >= options.stableSamples) return latest;
-      previous = fingerprint;
-      await new Promise((resolve) => setTimeout(resolve, options.pollIntervalMs));
-      latest = await this.inspect();
+    if (!this.options.waitForRecoveryStable) {
+      throw new UnsupportedCapabilityError("Fiber peer/channel reconciliation must be implemented by the native host before restore.");
     }
-    throw new Error("Fiber observable state did not stabilize before the recovery timeout.");
+    return this.options.waitForRecoveryStable(expected, options);
   }
 }

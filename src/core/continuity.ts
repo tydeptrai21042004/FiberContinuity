@@ -1,174 +1,187 @@
 import type { FiberAdapter, RecoveryStabilityOptions } from "../adapters/FiberAdapter";
 import type { FiberSnapshot, RecoveryArchive, RecoveryPreflight, RecoveryReport, RestoreTargetAssessment } from "./types";
 import { assessCompatibility } from "./compatibility";
-import { createArchive, decryptArchive } from "./archive";
-import { UnsupportedCapabilityError } from "./errors";
+import { assertSnapshot, createArchive, decryptArchive } from "./archive";
+import { ContinuityError, UnsupportedCapabilityError } from "./errors";
 import { comparableSnapshot, verifyRecovery } from "./verify";
+import {
+  BrowserRecoveryJournal, MemoryRecoveryJournal, type RecoveryJournal,
+  type TransactionMarker, type TransactionStage, withAdapterLock
+} from "./operation";
 
-export interface FiberContinuityOptions extends Partial<RecoveryStabilityOptions> {}
-
-export type RecoveryStage =
-  | "decrypting"
-  | "inspecting-target"
-  | "preflight"
-  | "capturing-rollback"
-  | "restoring"
-  | "restarting"
-  | "stabilizing"
-  | "verifying"
-  | "rolling-back"
-  | "complete";
-
-export interface RecoveryProgressEvent {
-  stage: RecoveryStage;
-  detail: string;
+export interface FiberContinuityOptions extends Partial<RecoveryStabilityOptions> {
+  /** For live integrations, require upstream-defined atomic checkpoints instead of optimistic double-inspection. */
+  requireAtomicCheckpoint?: boolean;
+  /** Optional journal implementation; defaults to durable browser journal when a stable resource ID is provided. */
+  journal?: RecoveryJournal;
 }
 
+export type RecoveryStage = "decrypting" | "inspecting-target" | "preflight" | "capturing-rollback" |
+  "restoring" | "restarting" | "stabilizing" | "verifying" | "rolling-back" | "complete";
+export interface RecoveryProgressEvent { stage: RecoveryStage; detail: string }
 export type RecoveryProgressCallback = (event: RecoveryProgressEvent) => void;
 
-const DEFAULT_STABILITY: RecoveryStabilityOptions = {
-  timeoutMs: 5_000,
-  pollIntervalMs: 100,
-  stableSamples: 2
-};
+const DEFAULT_STABILITY: RecoveryStabilityOptions = { timeoutMs: 5_000, pollIntervalMs: 100, stableSamples: 2 };
+const journals = new WeakMap<object, RecoveryJournal>();
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function getJournal(adapter: FiberAdapter): RecoveryJournal {
+  const existing = journals.get(adapter);
+  if (existing) return existing;
+  const journal = adapter.recoveryResourceId && typeof window !== "undefined"
+    ? new BrowserRecoveryJournal(adapter.recoveryResourceId, window.localStorage)
+    : new MemoryRecoveryJournal();
+  journals.set(adapter, journal);
+  return journal;
 }
-
-function assertCreatePassword(password: string): void {
-  if (password.length < 12) {
-    throw new Error("Recovery password must be at least 12 characters.");
-  }
-}
-
 function normalizeStability(options: FiberContinuityOptions): RecoveryStabilityOptions {
   const stability = { ...DEFAULT_STABILITY, ...options };
-  if (!Number.isFinite(stability.timeoutMs) || stability.timeoutMs < 250) {
-    throw new Error("Recovery stability timeout must be at least 250 ms.");
+  if (!Number.isFinite(stability.timeoutMs) || stability.timeoutMs < 250 || stability.timeoutMs > 600_000) {
+    throw new Error("Recovery stability timeout must be between 250 ms and 600000 ms.");
   }
   if (!Number.isFinite(stability.pollIntervalMs) || stability.pollIntervalMs < 10) {
     throw new Error("Recovery stability poll interval must be at least 10 ms.");
   }
-  if (!Number.isInteger(stability.stableSamples) || stability.stableSamples < 2) {
-    throw new Error("Recovery stability requires at least two matching samples.");
+  if (!Number.isInteger(stability.stableSamples) || stability.stableSamples < 2 || stability.stableSamples > 1000) {
+    throw new Error("Recovery stability requires at least two matching samples (maximum 1000).");
   }
-  if (stability.pollIntervalMs >= stability.timeoutMs) {
-    throw new Error("Recovery stability poll interval must be shorter than the timeout.");
+  if (stability.pollIntervalMs * (stability.stableSamples - 1) >= stability.timeoutMs) {
+    throw new Error("Recovery stability timeout cannot accommodate the requested stable samples.");
   }
   return stability;
 }
-
-function hasUnavailableRecoveryVisibility(snapshot: FiberSnapshot): boolean {
-  return Object.values(snapshot.capabilities).some((coverage) => coverage === "unavailable");
+function knownNetwork(snapshot: FiberSnapshot): boolean {
+  return (snapshot.network === "testnet" || snapshot.network === "mainnet") &&
+    snapshot.networkIdentity.trim().toLowerCase() !== "unknown";
 }
-
 function genericTargetSafety(expected: FiberSnapshot, current: FiberSnapshot): RestoreTargetAssessment {
   const visibleRecords = current.channels.length + current.payments.length + current.invoices.length;
-  const incompleteVisibility = hasUnavailableRecoveryVisibility(current);
-
+  const incomplete = Object.values(current.capabilities).some((coverage) => coverage !== "full");
   if (expected.nodeId === current.nodeId) {
     if (comparableSnapshot(expected) === comparableSnapshot(current)) {
       return { status: "safe", reason: "Target already matches the authenticated backup snapshot." };
     }
-    if (visibleRecords > 0) {
-      return {
-        status: "review",
-        reason: "Target has the same node identity but different live records. Refusing to overwrite potentially newer state without an explicit adapter safety decision."
-      };
+    if (visibleRecords > 0 || incomplete) {
+      return { status: "review", reason: "Same-identity target differs from backup or contains unobservable recovery state. Require an explicit upstream safety decision." };
     }
-    if (incompleteVisibility) {
-      return {
-        status: "review",
-        reason: "Target keeps the source identity but differs from the backup and some recovery state is unobservable. Supply an explicit target-safety hook before destructive restore."
-      };
-    }
-    return { status: "safe", reason: "Target keeps the source identity and all observable recovery record families are empty." };
+    return { status: "safe", reason: "Same-identity target is fully observable and has no recovery records." };
   }
-
-  if (visibleRecords > 0) {
-    return {
-      status: "blocked",
-      reason: `Target belongs to a different node identity and contains ${visibleRecords} visible Fiber record(s). Refusing destructive restore.`
-    };
-  }
-
-  if (incompleteVisibility) {
-    return {
-      status: "review",
-      reason: "Target identity differs and the adapter cannot prove that all relevant target state is empty. Supply an explicit target-safety hook."
-    };
-  }
-
-  return {
-    status: "safe",
-    reason: "Target identity differs, but the adapter reports an empty fully-observable recovery target."
-  };
+  if (visibleRecords > 0) return { status: "blocked", reason: "Different node identity has existing live Fiber records; destructive restore is blocked." };
+  if (incomplete) return { status: "review", reason: "A different-identity target cannot be proven empty while records are unobservable." };
+  return { status: "safe", reason: "Target differs in identity but all supported recovery record families are observed as empty." };
 }
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function safeProgress(progress: RecoveryProgressCallback | undefined, stage: RecoveryStage, detail: string): void {
+  // A rendering/telemetry callback must not cause a destructive recovery to stop mid-mutation.
+  try { progress?.({ stage, detail }); } catch { /* best-effort telemetry */ }
 }
 
 export class FiberContinuity {
   private readonly stability: RecoveryStabilityOptions;
-
+  private readonly journal: RecoveryJournal;
+  private readonly requireAtomicCheckpoint: boolean;
   constructor(private readonly adapter: FiberAdapter, options: FiberContinuityOptions = {}) {
     this.stability = normalizeStability(options);
+    this.journal = options.journal ?? getJournal(adapter);
+    this.requireAtomicCheckpoint = options.requireAtomicCheckpoint ?? !adapter.name.startsWith("demo-");
   }
 
-  inspect() {
-    return this.adapter.inspect();
+  inspect() { return this.adapter.inspect(); }
+  getInterruptedRecovery(): TransactionMarker | null { return this.journal.read(); }
+  /** Only for the deterministic demo environment; NOT a production unlock mechanism. */
+  clearDemoRecoveryJournal(): void {
+    if (!(this.adapter.name.startsWith("demo-") && this.adapter.supportsSafeRollback)) {
+      throw new ContinuityError("MANUAL_REVIEW_REQUIRED", "Production recovery quarantine cannot be cleared by the UI.", true);
+    }
+    this.journal.clear();
+  }
+
+  private async exclusive<T>(fn: () => Promise<T>, needNativeLease = true): Promise<T> {
+    if (this.requireAtomicCheckpoint && !this.adapter.recoveryResourceId) {
+      throw new ContinuityError("RECOVERY_RESOURCE_UNDEFINED", "Live Fiber recovery requires a stable storage resource ID for cross-tab safety.");
+    }
+    return withAdapterLock(this.adapter, this.adapter.recoveryResourceId, async () => {
+      const release = needNativeLease ? await this.adapter.acquireRecoveryLease?.() : undefined;
+      try { return await fn(); }
+      finally { await release?.(); }
+    });
+  }
+
+  private assertNoInterruptedTransaction(): void {
+    const previous = this.journal.read();
+    if (previous) throw new ContinuityError("RECOVERY_INTERRUPTED",
+      `Restore blocked: unresolved recovery transaction ${previous.operationId} (${previous.stage}). Keep the target quarantined and follow the native recovery procedure.`, true);
   }
 
   private async createConsistentCheckpoint() {
     if (this.adapter.createRecoveryCheckpoint) {
-      return this.adapter.createRecoveryCheckpoint();
+      const result = await this.adapter.createRecoveryCheckpoint();
+      assertSnapshot(result.snapshot);
+      this.assertNativeBytes(result.nativeBackup);
+      return result;
     }
-
+    if (this.requireAtomicCheckpoint) {
+      throw new ContinuityError("ATOMIC_CHECKPOINT_REQUIRED", "Production backup requires an upstream-defined atomic recovery checkpoint.");
+    }
+    // Best effort for simulated / test adapters only; matching observations do not prove atomicity.
     const before = await this.adapter.inspect();
+    assertSnapshot(before);
     const nativeBackup = await this.adapter.exportNativeBackup();
     const after = await this.adapter.inspect();
+    assertSnapshot(after);
+    this.assertNativeBytes(nativeBackup);
     if (comparableSnapshot(before) !== comparableSnapshot(after)) {
-      throw new Error("Backup aborted: Fiber state changed while the native backup was being exported. Retry when the node is stable.");
+      throw new Error("Backup aborted: Fiber state changed while native backup was exported.");
     }
     return { snapshot: after, nativeBackup };
   }
 
+  private assertNativeBytes(data: Uint8Array): void {
+    if (!(data instanceof Uint8Array) || data.byteLength === 0) {
+      throw new ContinuityError("CHECKPOINT_INVALID", "Native checkpoint must contain non-empty binary recovery data.");
+    }
+  }
+
   async createBackup(password: string): Promise<RecoveryArchive> {
-    assertCreatePassword(password);
-    const checkpoint = await this.createConsistentCheckpoint();
-    return createArchive(checkpoint.snapshot, checkpoint.nativeBackup, password);
+    if (password.length < 12) throw new Error("Recovery password must be at least 12 characters.");
+    return this.exclusive(async () => {
+      this.assertNoInterruptedTransaction();
+      const checkpoint = await this.createConsistentCheckpoint();
+      return createArchive(checkpoint.snapshot, checkpoint.nativeBackup, password);
+    });
   }
 
   private async preflightDecoded(source: FiberSnapshot, target: FiberSnapshot): Promise<RecoveryPreflight> {
+    assertSnapshot(source);
+    assertSnapshot(target);
     const compatibility = assessCompatibility(source.fiberVersion, target.fiberVersion);
-    const networkMatches = source.network === target.network && source.networkIdentity === target.networkIdentity;
-    const targetSafety = this.adapter.assessRestoreTarget
+    const networkMatches = knownNetwork(source) && knownNetwork(target) &&
+      source.network === target.network && source.networkIdentity === target.networkIdentity;
+    let targetSafety = this.adapter.assessRestoreTarget
       ? await this.adapter.assessRestoreTarget(source, target)
       : genericTargetSafety(source, target);
-
-    return {
-      networkMatches,
-      compatibility,
-      targetSafety,
-      sourceNodeId: source.nodeId,
-      targetNodeId: target.nodeId,
-      source,
-      target
-    };
+    if (this.requireAtomicCheckpoint && (!this.adapter.checkpointSupported ||
+        !this.adapter.acquireRecoveryLease || !this.adapter.readinessSupported)) {
+      targetSafety = { status: "review", reason: "Live recovery requires verified native checkpoint, exclusive lease and peer-reconciliation integrations." };
+    }
+    if (!targetSafety || !["safe", "review", "blocked"].includes(targetSafety.status) ||
+      typeof targetSafety.reason !== "string" || !targetSafety.reason.trim()) {
+      throw new ContinuityError("TARGET_ASSESSMENT_INVALID", "Adapter returned an invalid target-safety decision.");
+    }
+    return { networkMatches, compatibility, targetSafety, sourceNodeId: source.nodeId,
+      targetNodeId: target.nodeId, source, target };
   }
 
   async preflight(archive: RecoveryArchive, password: string): Promise<RecoveryPreflight> {
-    const decoded = await decryptArchive(archive, password);
-    const target = await this.adapter.inspect();
-    return this.preflightDecoded(decoded.snapshot, target);
+    return this.exclusive(async () => {
+      this.assertNoInterruptedTransaction();
+      const decoded = await decryptArchive(archive, password);
+      return this.preflightDecoded(decoded.snapshot, await this.adapter.inspect());
+    }, false);
   }
 
   private assertPreflightSafe(preflight: RecoveryPreflight): void {
-    if (!preflight.networkMatches) {
-      throw new Error("Restore blocked: backup belongs to a different Fiber/CKB network identity.");
-    }
+    if (!preflight.networkMatches) throw new Error("Restore blocked: backup belongs to a different or unknown Fiber/CKB network identity.");
     if (preflight.compatibility.status !== "supported") {
       throw new Error(`Restore blocked (${preflight.compatibility.status}): ${preflight.compatibility.reason}`);
     }
@@ -179,105 +192,151 @@ export class FiberContinuity {
 
   private async waitForStableRecovery(expected: FiberSnapshot): Promise<FiberSnapshot> {
     if (this.adapter.waitForRecoveryStable) {
-      return this.adapter.waitForRecoveryStable(expected, this.stability);
+      const result = await this.adapter.waitForRecoveryStable(expected, this.stability);
+      assertSnapshot(result);
+      return result;
     }
-
     const deadline = Date.now() + this.stability.timeoutMs;
     let previous = "";
     let stableCount = 0;
-    let latest = await this.adapter.inspect();
-
     while (Date.now() <= deadline) {
+      const latest = await this.adapter.inspect();
+      assertSnapshot(latest);
       const current = comparableSnapshot(latest);
       stableCount = current === previous ? stableCount + 1 : 1;
       if (stableCount >= this.stability.stableSamples) return latest;
       previous = current;
       await sleep(this.stability.pollIntervalMs);
-      latest = await this.adapter.inspect();
     }
     throw new Error("Recovery did not reach a stable observable state before the verification timeout.");
   }
 
-  /**
-   * Captures rollback bytes while proving the target did not change between preflight and mutation.
-   * Only an explicit UnsupportedCapabilityError may disable rollback. Operational export failures abort.
-   */
-  private async prepareRollback(expectedTarget: FiberSnapshot): Promise<Uint8Array | undefined> {
+  private async prepareRollback(expectedTarget: FiberSnapshot): Promise<Uint8Array> {
     if (this.adapter.createRecoveryCheckpoint) {
       const checkpoint = await this.adapter.createRecoveryCheckpoint();
+      assertSnapshot(checkpoint.snapshot);
+      this.assertNativeBytes(checkpoint.nativeBackup);
       if (comparableSnapshot(checkpoint.snapshot) !== comparableSnapshot(expectedTarget)) {
         throw new Error("Restore aborted: target state changed after preflight. Run preflight again against the latest state.");
       }
       return checkpoint.nativeBackup;
     }
-
+    if (this.requireAtomicCheckpoint) {
+      throw new ContinuityError("ATOMIC_CHECKPOINT_REQUIRED", "Production restore requires an atomic rollback checkpoint before mutation.");
+    }
     const before = await this.adapter.inspect();
+    assertSnapshot(before);
     if (comparableSnapshot(before) !== comparableSnapshot(expectedTarget)) {
       throw new Error("Restore aborted: target state changed after preflight. Run preflight again against the latest state.");
     }
-
     try {
       const rollback = await this.adapter.exportNativeBackup();
+      this.assertNativeBytes(rollback);
       const after = await this.adapter.inspect();
+      assertSnapshot(after);
       if (comparableSnapshot(before) !== comparableSnapshot(after)) {
-        throw new Error("Restore aborted: target state changed while the rollback checkpoint was being captured.");
+        throw new Error("Restore aborted: target state changed while rollback checkpoint was being captured.");
       }
       return rollback;
     } catch (error) {
-      if (error instanceof UnsupportedCapabilityError) return undefined;
-      throw new Error(`Restore aborted: rollback checkpoint could not be captured safely. ${errorMessage(error)}`);
+      if (error instanceof UnsupportedCapabilityError) {
+        throw new ContinuityError("ROLLBACK_UNAVAILABLE", "Restore aborted: a rollback checkpoint is required before mutation.");
+      }
+      throw new Error(`Restore aborted: rollback checkpoint could not be captured safely. ${message(error)}`);
     }
   }
 
-  private async rollbackAfterFailure(rollback: Uint8Array | undefined, failure: unknown, progress?: RecoveryProgressCallback): Promise<never> {
-    if (!rollback) throw failure instanceof Error ? failure : new Error(String(failure));
+  private mark(marker: TransactionMarker, stage: TransactionStage): void {
+    marker.stage = stage;
+    this.journal.write(marker);
+  }
+  private quarantine(marker: TransactionMarker): void {
+    this.mark(marker, "quarantined");
+  }
 
-    progress?.({ stage: "rolling-back", detail: "Recovery failed. Restoring the pre-mutation checkpoint." });
+  private async verifyRollback(target: FiberSnapshot): Promise<void> {
+    // Do not rely on a potentially failed post-restore reconciliation hook for rollback verification.
+    // This confirms local snapshot equality ONLY, and is used solely for adapters explicitly
+    // guaranteeing that native automatic rollback is safe (the demo adapter does).
+    const first = await this.adapter.inspect();
+    assertSnapshot(first);
+    const second = await this.adapter.inspect();
+    assertSnapshot(second);
+    if (comparableSnapshot(first) !== comparableSnapshot(target) ||
+        comparableSnapshot(second) !== comparableSnapshot(target)) {
+      throw new Error("Rollback acknowledged by provider but checkpoint fingerprint differs.");
+    }
+  }
+
+  private async rollbackAfterFailure(rollback: Uint8Array, target: FiberSnapshot, failure: unknown,
+    marker: TransactionMarker, progress?: RecoveryProgressCallback): Promise<never> {
+    if (!this.adapter.supportsSafeRollback) {
+      this.quarantine(marker);
+      throw new ContinuityError("RECOVERY_UNVERIFIED", `Recovery interrupted after mutation. Automatic rollback is not approved for this adapter. ${message(failure)}`, true);
+    }
+    safeProgress(progress, "rolling-back", "Recovery failed. Verifying restoration of the pre-mutation checkpoint.");
     try {
       await this.adapter.restoreNativeBackup(rollback);
       await this.adapter.restartAfterRestore?.();
+      await this.verifyRollback(target);
+      this.journal.clear();
     } catch (rollbackError) {
-      throw new Error(
-        `Recovery failed and the automatic rollback also failed. Recovery error: ${errorMessage(failure)}. Rollback error: ${errorMessage(rollbackError)}`
-      );
+      this.quarantine(marker);
+      throw new ContinuityError("ROLLBACK_UNVERIFIED",
+        `Recovery failed and previous state could not be verified. Recovery error: ${message(failure)}. Rollback error: ${message(rollbackError)}`, true);
     }
-
-    throw new Error(`Recovery failed; the previous target checkpoint was restored. Original error: ${errorMessage(failure)}`);
+    throw new ContinuityError("RECOVERY_ROLLED_BACK", `Recovery failed; the previous target checkpoint was restored and verified. Original error: ${message(failure)}`);
   }
 
   async restore(archive: RecoveryArchive, password: string, progress?: RecoveryProgressCallback): Promise<RecoveryReport> {
-    progress?.({ stage: "decrypting", detail: "Authenticating and decrypting the recovery archive." });
-    const decoded = await decryptArchive(archive, password);
-
-    progress?.({ stage: "inspecting-target", detail: "Inspecting the current recovery target." });
-    const target = await this.adapter.inspect();
-
-    progress?.({ stage: "preflight", detail: "Re-running compatibility, network and target-safety gates." });
-    const preflight = await this.preflightDecoded(decoded.snapshot, target);
-    this.assertPreflightSafe(preflight);
-
-    progress?.({ stage: "capturing-rollback", detail: "Capturing a pre-mutation rollback checkpoint." });
-    const rollback = await this.prepareRollback(target);
-
-    let after: FiberSnapshot;
-    try {
-      progress?.({ stage: "restoring", detail: "Restoring native Fiber recovery state." });
-      await this.adapter.restoreNativeBackup(decoded.nativeBackup);
-
-      if (this.adapter.restartAfterRestore) {
-        progress?.({ stage: "restarting", detail: "Restarting the Fiber integration after restore." });
-        await this.adapter.restartAfterRestore();
+    return this.exclusive(async () => {
+      this.assertNoInterruptedTransaction();
+      safeProgress(progress, "decrypting", "Authenticating and decrypting recovery archive.");
+      const decoded = await decryptArchive(archive, password);
+      this.assertNativeBytes(decoded.nativeBackup);
+      safeProgress(progress, "inspecting-target", "Inspecting current recovery target.");
+      const target = await this.adapter.inspect();
+      safeProgress(progress, "preflight", "Checking network, version and target safety.");
+      this.assertPreflightSafe(await this.preflightDecoded(decoded.snapshot, target));
+      safeProgress(progress, "capturing-rollback", "Capturing pre-mutation rollback checkpoint.");
+      const rollback = await this.prepareRollback(target);
+      const marker: TransactionMarker = {
+        schemaVersion: 1,
+        operationId: crypto.randomUUID(), startedAt: new Date().toISOString(), stage: "prepared"
+      };
+      this.journal.write(marker); // persistence MUST succeed before the first mutation
+      let after: FiberSnapshot;
+      try {
+        this.mark(marker, "mutating");
+        safeProgress(progress, "restoring", "Restoring native Fiber state.");
+        await this.adapter.restoreNativeBackup(decoded.nativeBackup);
+        this.mark(marker, "reconciling");
+        if (this.adapter.restartAfterRestore) {
+          safeProgress(progress, "restarting", "Restarting Fiber integration.");
+          await this.adapter.restartAfterRestore();
+        }
+        safeProgress(progress, "stabilizing", "Waiting for Fiber state to stabilize.");
+        after = await this.waitForStableRecovery(decoded.snapshot);
+        this.mark(marker, "verifying");
+      } catch (error) {
+        return this.rollbackAfterFailure(rollback, target, error, marker, progress);
       }
-
-      progress?.({ stage: "stabilizing", detail: "Waiting for the observable Fiber state to stabilize." });
-      after = await this.waitForStableRecovery(decoded.snapshot);
-    } catch (error) {
-      return this.rollbackAfterFailure(rollback, error, progress);
-    }
-
-    progress?.({ stage: "verifying", detail: "Comparing recovered state with the authenticated source snapshot." });
-    const report = verifyRecovery(decoded.snapshot, after);
-    progress?.({ stage: "complete", detail: "Recovery verification completed." });
-    return report;
+      safeProgress(progress, "verifying", "Comparing recovered state against authenticated source.");
+      let report: RecoveryReport;
+      try { report = verifyRecovery(decoded.snapshot, after); }
+      catch (error) {
+        this.quarantine(marker);
+        throw new ContinuityError("RECOVERY_VERIFICATION_FAILED", `Verification failed after mutation: ${message(error)}`, true);
+      }
+      if (report.overall === "healthy") {
+        this.journal.clear();
+        safeProgress(progress, "complete", "Recovery verified with full observable coverage.");
+      } else {
+        // No automatic rollback: restoring older channel state after a completed restore may itself be unsafe.
+        this.quarantine(marker);
+        safeProgress(progress, "complete", "Recovery has unverified/unsafe aspects. Target remains quarantined.");
+      }
+      return report;
+    });
   }
 }

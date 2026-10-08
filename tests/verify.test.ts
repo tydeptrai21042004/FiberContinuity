@@ -28,7 +28,7 @@ describe("post-restore verification", () => {
     expect(report.checks.find((check) => check.key === "invoices")?.status).toBe("fail");
   });
 
-  it("keeps metadata-only payment mismatches as warnings", async () => {
+  it("fails on observable payment mismatches even with metadata-only coverage", async () => {
     const adapter = new DemoFiberAdapter();
     const before = await adapter.inspect();
     const after = structuredClone(before);
@@ -37,8 +37,8 @@ describe("post-restore verification", () => {
     after.payments[0].status = "FAILED";
 
     const report = verifyRecovery(before, after);
-    expect(report.overall).toBe("degraded");
-    expect(report.checks.find((check) => check.key === "payments")?.status).toBe("warn");
+    expect(report.overall).toBe("unsafe");
+    expect(report.checks.find((check) => check.key === "payments")?.status).toBe("fail");
   });
 
   it("reports unavailable adapter coverage as unknown instead of a false PASS", async () => {

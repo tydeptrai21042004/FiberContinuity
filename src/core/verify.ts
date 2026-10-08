@@ -42,7 +42,7 @@ function compareChannels(before: ChannelSnapshot[], after: ChannelSnapshot[], co
   return {
     key: "channels",
     label: coverage === "full" ? "Channel state + balances" : "Channel metadata",
-    status: same ? "pass" : "fail",
+    status: same ? (coverage === "full" ? "pass" : "warn") : "fail",
     detail: same
       ? `${a.length} channel record(s) preserved across ${fields.join(", ")}.`
       : `Channel recovery mismatch (${a.length} before / ${b.length} after). ${diffIds(a, b)}`.trim()
@@ -60,7 +60,7 @@ function comparePayments(before: PaymentSnapshot[], after: PaymentSnapshot[], co
   return {
     key: "payments",
     label: "Payment records",
-    status: same ? "pass" : coverage === "full" ? "fail" : "warn",
+    status: same ? (coverage === "full" ? "pass" : "warn") : "fail",
     detail: same ? `${a.length} payment record(s) preserved.` : `Payment-history mismatch (${a.length} before / ${b.length} after). ${diffIds(a, b)}`.trim()
   };
 }
@@ -76,7 +76,7 @@ function compareInvoices(before: InvoiceSnapshot[], after: InvoiceSnapshot[], co
   return {
     key: "invoices",
     label: "Invoice records",
-    status: same ? "pass" : coverage === "full" ? "fail" : "warn",
+    status: same ? (coverage === "full" ? "pass" : "warn") : "fail",
     detail: same ? `${a.length} invoice record(s) preserved.` : `Invoice-history mismatch (${a.length} before / ${b.length} after). ${diffIds(a, b)}`.trim()
   };
 }
@@ -101,7 +101,9 @@ export function verifyRecovery(before: FiberSnapshot, after: FiberSnapshot): Rec
     {
       key: "network",
       label: "Network identity",
-      status: before.network === after.network && before.networkIdentity === after.networkIdentity ? "pass" : "fail",
+      status: before.network !== "unknown" && after.network !== "unknown" &&
+        before.network === after.network && before.networkIdentity.toLowerCase() !== "unknown" &&
+        before.networkIdentity === after.networkIdentity ? "pass" : "fail",
       detail: `${before.network}/${before.networkIdentity} → ${after.network}/${after.networkIdentity}`
     },
     {

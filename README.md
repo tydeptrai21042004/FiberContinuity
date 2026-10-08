@@ -196,3 +196,7 @@ The demo is a single Vite + React site with no database or server secret. `verce
 ## Status
 
 This remains a **reference implementation**. The deterministic adapter proves the application safety/state-machine behavior; it does not by itself prove real Fiber/FNN recovery. The next ecosystem milestone should be one pinned Fiber testnet backup → loss → restore → reconnect/reconcile → verify run with retained evidence.
+
+## Reliability hardening and important limitations
+
+See [PATCH_NOTES.md](PATCH_NOTES.md) for recovery locks, operation journaling, rollback verification, incomplete-visibility quarantine, new fault-injection tests, and the exact native Fiber integration contracts required for real-funds recovery. This application continues to ship in **deterministic demo mode** only. Recovery after channel state has advanced externally remains unsafe without upstream-supported peer reconciliation. Do not treat a local snapshot match as proof of network/channel safety.

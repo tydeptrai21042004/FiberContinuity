@@ -6,6 +6,8 @@ export interface BrowserNodeOptions {
   /** Browser nodes must use explicitly supplied secure-WebSocket Fiber bootnodes. */
   bootnodes: string[];
   logLevel?: "error" | "trace" | "debug" | "info";
+  /** Explicit IndexedDB namespace; never share it with another running Fiber instance. */
+  databasePrefix?: string;
 }
 
 function assertBrowserBootnodes(bootnodes: string[]): void {
@@ -29,6 +31,10 @@ function assertBrowserBootnodes(bootnodes: string[]): void {
  */
 export async function createEphemeralFiberJsBrowserNode(options: BrowserNodeOptions) {
   assertBrowserBootnodes(options.bootnodes);
+  if (!/^https:\/\//.test(options.ckbRpcUrl)) throw new Error("Browser CKB RPC must use HTTPS.");
+  if (options.databasePrefix && !/^[a-zA-Z0-9_-]{1,100}$/.test(options.databasePrefix)) {
+    throw new Error("Invalid browser Fiber IndexedDB database prefix.");
+  }
   const { Fiber, randomSecretKey } = await import("@nervosnetwork/fiber-js");
   const fiber = new Fiber();
   const network = options.network ?? "testnet";
@@ -47,7 +53,7 @@ export async function createEphemeralFiberJsBrowserNode(options: BrowserNodeOpti
     randomSecretKey(),
     undefined,
     options.logLevel ?? "info",
-    "/wasm"
+    options.databasePrefix ?? `fiber-continuity-ephemeral-${crypto.randomUUID()}`
   );
 
   return fiber;

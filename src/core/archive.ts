@@ -20,6 +20,7 @@ function requiredString(value: unknown, label: string, maxLength = MAX_TEXT_FIEL
   if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
     throw new Error(`${label} is missing or invalid.`);
   }
+  if (/[\u0000-\u001f\u007f]/.test(value)) throw new Error(`${label} contains invalid control characters.`);
   return value;
 }
 
@@ -55,7 +56,7 @@ function assertRecordArray(value: unknown, label: string): JsonRecord[] {
   });
 }
 
-function assertSnapshot(snapshot: unknown): asserts snapshot is FiberSnapshot {
+export function assertSnapshot(snapshot: unknown): asserts snapshot is FiberSnapshot {
   if (!isRecord(snapshot)) throw new Error("Archive recovery snapshot is missing.");
 
   requiredString(snapshot.capturedAt, "Archive recovery snapshot capture timestamp");
@@ -85,6 +86,24 @@ function assertSnapshot(snapshot: unknown): asserts snapshot is FiberSnapshot {
   seen(channels, "channel");
   seen(payments, "payment");
   seen(invoices, "invoice");
+  // A provider may omit record families only when it admits unavailability.
+  // Claims of complete field coverage must be substantiated by each record.
+  const capability = snapshot.capabilities as JsonRecord;
+  if (capability.channels === "unavailable" && channels.length ||
+      capability.payments === "unavailable" && payments.length ||
+      capability.invoices === "unavailable" && invoices.length) {
+    throw new Error("Unobservable recovery record families cannot simultaneously contain trusted records.");
+  }
+  if (capability.channels === "full" && channels.some((ch) => ch.localBalance === undefined || ch.remoteBalance === undefined)) {
+    throw new Error("Full channel coverage requires both balance fields for every channel.");
+  }
+  for (const [family, records] of [["payment", payments], ["invoice", invoices]] as const) {
+    const declared = capability[family === "payment" ? "payments" : "invoices"];
+    if (declared === "full" && records.some((record) => record.amount === undefined)) {
+      throw new Error(`Full ${family} coverage requires amount fields for every record.`);
+    }
+  }
+
 
   channels.forEach((record, index) => {
     requiredString(record.state, `Archive channel[${index}] state`);
@@ -144,6 +163,7 @@ export async function createArchive(
 ): Promise<RecoveryArchive> {
   assertSnapshot(snapshot);
   if (!(nativeBackup instanceof Uint8Array)) throw new Error("Native backup must be a Uint8Array.");
+  if (nativeBackup.byteLength === 0) throw new Error("Native recovery checkpoint cannot be empty.");
   if (nativeBackup.byteLength > MAX_NATIVE_BACKUP_BYTES) {
     throw new Error(`Native backup exceeds the browser archive limit of ${Math.floor(MAX_NATIVE_BACKUP_BYTES / 1024 / 1024)} MiB.`);
   }
@@ -231,6 +251,7 @@ export async function decryptArchive(
   }
   assertSnapshot(envelopeValue.snapshot);
   const nativeBackup = base64ToBytesStrict(envelopeValue.nativeBackup, "Authenticated native backup");
+  if (nativeBackup.byteLength === 0) throw new Error("Authenticated native backup cannot be empty.");
   if (nativeBackup.byteLength > MAX_NATIVE_BACKUP_BYTES) {
     throw new Error("Authenticated native backup exceeds the supported browser size limit.");
   }

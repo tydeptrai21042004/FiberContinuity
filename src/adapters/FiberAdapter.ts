@@ -13,6 +13,16 @@ export interface RecoveryStabilityOptions {
 
 export interface FiberAdapter {
   readonly name: string;
+  /** Unique stable storage identity, used for cross-tab locking and a durable interruption journal. */
+  readonly recoveryResourceId?: string;
+  /** Native adapter must make explicit guarantees about rollback safety before automatic rollback. */
+  readonly supportsSafeRollback?: boolean;
+  /** True only if post-restore peer/channel reconciliation is implemented by the host. */
+  readonly readinessSupported?: boolean;
+  /** True when createRecoveryCheckpoint is implemented by the actual native host. */
+  readonly checkpointSupported?: boolean;
+  /** Upstream-defined exclusive lease spanning native checkpoint, mutation and reconciliation. */
+  acquireRecoveryLease?(): Promise<() => void | Promise<void>>;
   inspect(): Promise<FiberSnapshot>;
   exportNativeBackup(): Promise<Uint8Array>;
   restoreNativeBackup(data: Uint8Array): Promise<void>;

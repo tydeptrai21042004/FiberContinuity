@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import packageJson from "../package.json";
 import { DemoFiberAdapter, type DemoFaultScenario } from "./adapters/DemoFiberAdapter";
 import { FiberContinuity, type RecoveryStage } from "./core/continuity";
+import { ContinuityError } from "./core/errors";
 import { MAX_ARCHIVE_JSON_BYTES, decryptArchive, parseArchive, validateArchive } from "./core/archive";
 import type { FiberSnapshot, RecoveryArchive, RecoveryPreflight, RecoveryReport } from "./core/types";
 import { downloadJson, readTextFile } from "./browser/files";
@@ -86,6 +87,7 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [scenario, setScenario] = useState<DemoFaultScenario>("state-loss");
   const [lastAction, setLastAction] = useState("Session inspection");
   const [notice, setNotice] = useState<OperationNotice>({
@@ -115,7 +117,8 @@ export default function App() {
   }, [view]);
 
   async function run(label: string, fn: () => Promise<void>) {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setNotice({ kind: "working", title: label });
     try {
@@ -123,8 +126,10 @@ export default function App() {
       setLastAction(label.replace(/…$/, ""));
     } catch (error) {
       setRecoveryStage(null);
-      setNotice({ kind: "error", title: "Operation stopped safely", detail: errorText(error) });
+      setNotice({ kind: "error", title: error instanceof ContinuityError && error.recoveryUnsafe
+        ? "Recovery safety unknown — target quarantined" : "Operation stopped safely", detail: errorText(error) });
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -225,7 +230,7 @@ export default function App() {
     await refresh();
     setNotice(next.overall === "healthy"
       ? { kind: "success", title: "Recovery verified — HEALTHY", detail: "The recovered observable Fiber state matches the authenticated recovery source." }
-      : { kind: "warning", title: "Recovery completed with findings", detail: "Review the verification report before treating continuity as complete." });
+      : { kind: "warning", title: "Recovery not fully verified — target quarantined", detail: "Do not operate on this restored state until all checks are complete and an upstream recovery review has cleared it." });
     setView("evidence");
   });
 
@@ -262,11 +267,12 @@ export default function App() {
     await refresh();
     setNotice(nextReport.overall === "healthy"
       ? { kind: "success", title: "Guided demo complete — HEALTHY", detail: "Backup → simulated loss → authenticated preflight → restore → verification completed." }
-      : { kind: "warning", title: "Guided demo completed with findings", detail: "Review the recovery evidence for details." });
+      : { kind: "warning", title: "Guided demo requires recovery review", detail: "The restored state remains quarantined; review checks before further operations." });
   });
 
   const reset = () => run("Resetting reference environment…", async () => {
     adapter.reset();
+    continuity.clearDemoRecoveryJournal();
     setArchive(null);
     setArchiveOrigin(null);
     setArchiveAuthenticated(false);
@@ -283,31 +289,39 @@ export default function App() {
   });
 
   function exportEvidence() {
+    // Shareable evidence MUST NOT contain payment identifiers, balances, peer keys, native
+    // node identities, raw snapshots, platform fingerprints or confidential archive metadata.
+    const summarize = (value: FiberSnapshot | null) => value ? {
+      fiberVersion: value.fiberVersion,
+      network: value.network,
+      capabilities: value.capabilities,
+      counts: { channels: value.channels.length, payments: value.payments.length, invoices: value.invoices.length }
+    } : null;
     const evidence = {
-      schemaVersion: "fiber-continuity-review-evidence-v1",
+      schemaVersion: "fiber-continuity-redacted-evidence-v2",
       generatedAt: new Date().toISOString(),
-      application: {
-        name: "FiberContinuity",
-        version: APP_VERSION,
-        mode: "deterministic-demo",
-        runtime: typeof navigator !== "undefined" ? navigator.userAgent : "browser"
-      },
-      archiveManifest: archive?.manifest ?? null,
+      application: { name: "FiberContinuity", version: APP_VERSION, mode: "deterministic-demo" },
+      hasArchive: Boolean(archive),
       archiveAuthenticated,
-      archiveSource,
-      preflight,
-      recoveryReport: report,
-      currentSnapshot: snapshot,
+      source: summarize(archiveSource),
+      preflight: preflight ? {
+        networkMatches: preflight.networkMatches,
+        compatibility: preflight.compatibility.status,
+        targetSafety: preflight.targetSafety.status
+      } : null,
+      recovery: report ? {
+        overall: report.overall,
+        checks: report.checks.map(({ key, status, label }) => ({ key, status, label })),
+        source: summarize(report.before), target: summarize(report.after)
+      } : null,
+      currentTarget: summarize(snapshot),
       guarantees: {
-        clientSideOnly: true,
+        referenceSimulationOnly: true,
         archivePayloadAuthenticated: archiveAuthenticated,
-        compatibilityFailClosed: true,
-        targetSafetyFailClosed: true,
-        targetRaceGuard: true,
-        postRestoreVerification: true
+        independentExternalPeerSafetyNotEstablished: true
       }
     };
-    downloadJson(`fiber-continuity-evidence-${Date.now()}.json`, evidence);
+    downloadJson(`fiber-continuity-redacted-evidence-${Date.now()}.json`, evidence);
   }
 
   const backupSteps = [
@@ -482,7 +496,7 @@ export default function App() {
             <>
               <div className="page-heading compact"><div><div className="eyebrow">EVIDENCE</div><h1>Recovery health and reproducible evidence.</h1><p>Verification distinguishes a healthy match from degraded or unsafe findings, including explicitly unavailable coverage.</p></div></div>
               <section className="panel">
-                <div className="panel-title"><div><span>01</span><div><h2>Recovery report</h2><p>Post-stabilization checks against the authenticated source snapshot.</p></div></div><div className="panel-actions">{report && <button onClick={() => downloadJson(`fiber-continuity-report-${Date.now()}.json`, report)}>Report JSON</button>}<button disabled={!snapshot && !report && !preflight} onClick={exportEvidence}>Evidence bundle</button></div></div>
+                <div className="panel-title"><div><span>01</span><div><h2>Recovery report</h2><p>Post-stabilization checks against the authenticated source snapshot.</p></div></div><div className="panel-actions">{report && <button onClick={() => downloadJson(`fiber-continuity-report-${Date.now()}.json`, report)}>Private report JSON (sensitive)</button>}<button disabled={!snapshot && !report && !preflight} onClick={exportEvidence}>Redacted evidence</button></div></div>
                 <HealthReport report={report} />
               </section>
               <section className="panel technical-evidence">

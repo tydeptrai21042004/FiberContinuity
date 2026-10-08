@@ -1,0 +1,25 @@
+FiberContinuity v0.5 reliability patch — files-only overlay
+Original: FiberContinuity-main(2).zip
+Copy FiberContinuity-main/* over the original project.
+For full details and safety limitations read PATCH_NOTES.md.
+
+ADDED         837 bytes  .github/workflows/ci.yml
+MODIFIED     4643 bytes  CHANGELOG.md
+ADDED        5555 bytes  PATCH_NOTES.md
+MODIFIED     9090 bytes  README.md
+MODIFIED      855 bytes  package.json
+MODIFIED    36349 bytes  src/App.tsx
+MODIFIED     5225 bytes  src/adapters/DemoFiberAdapter.ts
+MODIFIED     1777 bytes  src/adapters/FiberAdapter.ts
+MODIFIED    10774 bytes  src/adapters/FiberJsAdapter.ts
+MODIFIED     2373 bytes  src/adapters/createFiberJsBrowserNode.ts
+MODIFIED      864 bytes  src/browser/files.ts
+MODIFIED    12746 bytes  src/core/archive.ts
+MODIFIED     1990 bytes  src/core/compatibility.ts
+MODIFIED    18468 bytes  src/core/continuity.ts
+MODIFIED      455 bytes  src/core/errors.ts
+ADDED        4210 bytes  src/core/operation.ts
+MODIFIED     6036 bytes  src/core/verify.ts
+ADDED        9438 bytes  tests/hardening.test.ts
+MODIFIED     9414 bytes  tests/recovery.test.ts
+MODIFIED     2397 bytes  tests/verify.test.ts

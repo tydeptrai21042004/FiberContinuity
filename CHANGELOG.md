@@ -1,3 +1,12 @@
+## v0.5.0 — fail-closed recovery hardening (2026-10-08)
+
+- Add transaction journal, resource-level operation locks, cross-tab Web Locks when available.
+- Enforce rollback checkpoint; require atomic native checkpoint, storage lease and peer reconciliation for non-demo adapters.
+- Quarantine incomplete or unsafe restore; verify explicitly supported automatic rollback against prior target checkpoint.
+- Reject unknown network, malformed Fiber RPC responses and inconsistent snapshot coverage claims.
+- Redact default evidence export, prevent reentrant UI operations, improve browser download handling.
+- Add regression/fault-injection tests and Node 24 CI workflow. Demo-only UI remains intentional; production-native Fiber hooks are NOT included.
+
 # Changelog
 
 ## 0.4.0 — Production-oriented recovery UI

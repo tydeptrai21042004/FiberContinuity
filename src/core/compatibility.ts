@@ -15,7 +15,7 @@ function normalize(version: string): string {
 function parseVersion(version: string): ParsedVersion | undefined {
   const raw = normalize(version);
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(raw);
-  if (!match) return undefined;
+  if (!match || ![match[1], match[2], match[3]].every((n) => Number.isSafeInteger(Number(n)))) return undefined;
   return {
     raw,
     major: Number(match[1]),
