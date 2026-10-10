@@ -94,7 +94,11 @@ function decode(value: Encoded, depth = 0): unknown {
     case "date": { const date = new Date(value.v); if (!Number.isFinite(date.getTime())) throw new Error("Invalid date."); return date; }
     case "binary": {
       const bytes = unb64(value.v);
-      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      // Always allocate a new, owned ArrayBuffer. Uint8Array.buffer is typed as
+      // ArrayBufferLike, and slice() may therefore return SharedArrayBuffer.
+      // Constructors below require a real ArrayBuffer (TypeScript 5.9+).
+      const buffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buffer).set(bytes);
       if (value.type === "ArrayBuffer") return buffer;
       if (value.type === "DataView") return new DataView(buffer);
       const constructors: Record<string, { new (buffer: ArrayBuffer): ArrayBufferView }> = {
