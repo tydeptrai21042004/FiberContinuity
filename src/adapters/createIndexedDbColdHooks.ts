@@ -1,6 +1,7 @@
 import type { FiberSnapshot, RestoreTargetAssessment } from "../core/types";
 import type { NativeRecoveryHooks } from "./FiberJsAdapter";
 import { IndexedDbColdStore } from "./IndexedDbColdStore";
+import { assertFiber091StorageContract } from "./Fiber091StorageContract";
 
 /**
  * Host integration for a version-pinned Fiber JS testnet node.
@@ -69,13 +70,20 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
         throw new Error("Frozen node snapshot does not match the pinned host identity/configuration.");
       }
       await host.stopAndFence();
-      const nativeBackup = await store.exportBytes();
-      await host.resumeAfterBackup();
-      return { snapshot, nativeBackup };
+      try {
+        const nativeBackup = await store.exportBytes();
+        assertFiber091StorageContract(await store.validateBytes(nativeBackup));
+        return { snapshot, nativeBackup };
+      } finally {
+        // Host may deliberately remain stopped; no implicit unsafe restart.
+        await host.resumeAfterBackup();
+      }
     },
-    async exportBackup() { return store.exportBytes(); },
+    async exportBackup() { const bytes = await store.exportBytes(); assertFiber091StorageContract(await store.validateBytes(bytes)); return bytes; },
     async inspectRestoreTarget(source) {
-      await host.stopAndFence();
+      // Preflight is strictly non-mutating: do NOT stop a healthy running node.
+      // An operator must stop it first; fail if the host is still active.
+      await host.assertOfflineAndExclusive();
       // Never claim the records in an absent profile were actually inspected.
       const target = targetSnapshot();
       if (source.nodeId !== target.nodeId) return target;
@@ -90,6 +98,7 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
     },
     async restoreBackup(bytes) {
       await host.assertOfflineAndExclusive();
+      assertFiber091StorageContract(await store.validateBytes(bytes));
       await store.restoreBytes(bytes);
     },
     restartAfterRestore: () => host.startRestoredForIsolatedInspection()

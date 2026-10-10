@@ -1,0 +1,36 @@
+{
+  "release": "v0.7.0",
+  "baseline": "v0.6.0_vercel_TS2345_fix_full",
+  "patch_paths": [
+    "package.json",
+    "README.md",
+    "RELEASE_NOTES_V07.md",
+    "docs/REAL_FIBER_TESTNET_V07.md",
+    "docs/VALIDATION_V07.md",
+    "src/App.tsx",
+    "src/adapters/ManagedFiberTestnetHost.ts",
+    "src/adapters/Fiber091StorageContract.ts",
+    "src/adapters/createIndexedDbColdHooks.ts",
+    "src/adapters/IndexedDbColdStore.ts",
+    "src/components/RealFiberTestnetLab.tsx",
+    "tests/fiber091-storage-contract.test.ts",
+    "tests/cold-preflight-nonmutating.test.ts"
+  ],
+  "note": "Only the changed or required compatibility files. IndexedDbColdStore.ts is included to carry the previous Vercel TS2345 fix for repositories that missed it.",
+  "source_sha256": {
+    "package.json": "67ef72ec941c9cec8003dbd7f157045738a883a8f3ecf853959eb6bc30f96653",
+    "README.md": "4f16dbbc00033a8e2626c1d591a6283a8761a8bbefd6f155de3f72642041af9e",
+    "RELEASE_NOTES_V07.md": "5c0293728118fea7f3e5bf359b3f3c54945387dc31793e6077d4cf037fbbc38f",
+    "docs/REAL_FIBER_TESTNET_V07.md": "460cd67f55adb839a5875ec710a56a1a343a4c26186290f9e23f345e6801a5ba",
+    "docs/VALIDATION_V07.md": "421caaae1bf55526fcc014a4a3601877b162a64c5e6cfad674551dc9c594fed1",
+    "src/App.tsx": "4794cb199a29ddb42613dfe904b28032a7cc9e5dd63d0c1876364ec5f7f11124",
+    "src/adapters/ManagedFiberTestnetHost.ts": "a031cc30358886d2a8124250d7ea37e7c3cf2955669521572daa2d4cc8dabc4a",
+    "src/adapters/Fiber091StorageContract.ts": "fbe4bf1c374a3d3c8e69abb4bf1bd8cab3b80e8239f1100836826fc13b6d13b3",
+    "src/adapters/createIndexedDbColdHooks.ts": "0fb054065c614a720fdc0ae8c765f05bffdeb4dd852524722f1d43dfbc364358",
+    "src/adapters/IndexedDbColdStore.ts": "ed3bafdb9629aad2c9d75aa721c4257052c7ba1114c1940efe4f2fcae1cd4335",
+    "src/components/RealFiberTestnetLab.tsx": "d32ac55a17c23fd8684b337e6638aa7c3964929217cc1ffc128ddf975e1ad5b4",
+    "tests/fiber091-storage-contract.test.ts": "790bbad3dfe89f1b360b61bf63578d2993d2d2d8bc03f2717e375fbd0d88b343",
+    "tests/cold-preflight-nonmutating.test.ts": "b000480ff20964437dc5bc2c9710a900423a4cd559964e7379baf9decf15e7be"
+  },
+  "validation": "docs/VALIDATION_V07.md"
+}

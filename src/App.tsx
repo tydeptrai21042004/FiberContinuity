@@ -18,11 +18,12 @@ import StateComparison from "./components/StateComparison";
 import RecoveryProgress from "./components/RecoveryProgress";
 import RestoreConfirmDialog from "./components/RestoreConfirmDialog";
 import ColdStorageLab from "./components/ColdStorageLab";
+import RealFiberTestnetLab from "./components/RealFiberTestnetLab";
 
 const APP_VERSION = packageJson.version;
 const DEMO_PASSWORD = "fiber-demo-2026";
 
-type AppView = "overview" | "protect" | "recover" | "evidence" | "demo" | "storage";
+type AppView = "overview" | "protect" | "recover" | "evidence" | "demo" | "storage" | "real-testnet";
 
 type ArchiveOrigin = "created" | "imported" | null;
 
@@ -55,7 +56,8 @@ const navigation: Array<{ id: AppView; label: string; description: string }> = [
   { id: "recover", label: "Recover", description: "Restore from an archive" },
   { id: "evidence", label: "Evidence", description: "Verification and reports" },
   { id: "demo", label: "Demo lab", description: "Simulated failure scenarios" },
-  { id: "storage", label: "IndexedDB lab", description: "Real cold database round trip" }
+  { id: "storage", label: "IndexedDB lab", description: "Synthetic cold database round trip" },
+  { id: "real-testnet", label: "Real Fiber testnet", description: "Experimental WASM + IndexedDB" }
 ];
 
 function isPreflightSafe(value: RecoveryPreflight | null) {
@@ -534,6 +536,7 @@ export default function App() {
           )}
 
           {view === "storage" && <ColdStorageLab />}
+          {view === "real-testnet" && <RealFiberTestnetLab />}
 
           {view === "demo" && (
             <>

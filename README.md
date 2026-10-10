@@ -213,3 +213,9 @@ This remains a **reference implementation**. The deterministic adapter proves th
 ## Reliability hardening and important limitations
 
 See [PATCH_NOTES.md](PATCH_NOTES.md) for recovery locks, operation journaling, rollback verification, incomplete-visibility quarantine, new fault-injection tests, and the exact native Fiber integration contracts required for real-funds recovery. This application continues to ship in **deterministic demo mode** only. Recovery after channel state has advanced externally remains unsafe without upstream-supported peer reconciliation. Do not treat a local snapshot match as proof of network/channel safety.
+
+## Reviewer update — v0.7 real Fiber testnet lab
+
+The **Real Fiber testnet** navigation entry uses actual pinned `@nervosnetwork/fiber-js@0.9.1` WASM and an independently discovered, strictly schema-checked IndexedDB database. It can create encrypted zero-channel whole-node backups, run controlled lab-only data-loss/restore/readback checks, restart using an explicitly supplied original Fiber and CKB identities and CKB signing keys, optionally connect WSS testnet peers, and export redacted evidence. The main dashboard remains a deterministic demo; the real panel is deliberately separate and opt-in.
+
+**Important**: stock Fiber JS 0.9.1 still does **not** expose a public atomic checkpoint/flush acknowledgement. Never restore funded channel states with this experimental tool. Real testnet success is only established by executing the browser lab against reachable RPC and WSS endpoints, not by compiling the source. See [v0.7 integration and walkthrough](docs/REAL_FIBER_TESTNET_V07.md).
