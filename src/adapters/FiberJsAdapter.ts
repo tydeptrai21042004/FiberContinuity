@@ -12,6 +12,8 @@ export interface NativeRecoveryHooks {
   /** Same-point-in-time snapshot + bytes, provided by native integration. */
   createCheckpoint?(): Promise<{ snapshot: FiberSnapshot; nativeBackup: Uint8Array }>;
   restoreBackup(data: Uint8Array): Promise<void>;
+  inspectRestoreTarget?(source: FiberSnapshot): Promise<FiberSnapshot>;
+  prepareColdRestore?(source: FiberSnapshot, target: FiberSnapshot): Promise<void>;
   restartAfterRestore?(): Promise<void>;
   /** Must protect the complete native restoration workflow against external workers/processes. */
   acquireExclusiveRecoveryLease?(): Promise<() => void | Promise<void>>;
@@ -212,6 +214,20 @@ export class FiberJsAdapter implements FiberAdapter {
       payments: payments?.records ?? [],
       invoices: invoices?.records ?? []
     };
+  }
+
+  async inspectRestoreTarget(source: FiberSnapshot): Promise<FiberSnapshot> {
+    if (!this.options.recovery?.inspectRestoreTarget) {
+      return this.inspect();
+    }
+    return this.options.recovery.inspectRestoreTarget(source);
+  }
+
+  async prepareColdRestore(source: FiberSnapshot, target: FiberSnapshot): Promise<void> {
+    if (!this.options.recovery?.prepareColdRestore) {
+      throw new UnsupportedCapabilityError("Cold recovery requires an offline, empty-target revalidation hook.");
+    }
+    return this.options.recovery.prepareColdRestore(source, target);
   }
 
   async exportNativeBackup(): Promise<Uint8Array> {

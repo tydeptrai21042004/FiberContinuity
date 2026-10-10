@@ -184,8 +184,9 @@ export class FiberContinuity {
     return this.exclusive(async () => {
       this.assertNoInterruptedTransaction();
       const decoded = await decryptArchive(archive, password);
-      return this.preflightDecoded(decoded.snapshot, await this.adapter.inspect());
-    }, false);
+      return this.preflightDecoded(decoded.snapshot, this.adapter.inspectRestoreTarget
+        ? await this.adapter.inspectRestoreTarget(decoded.snapshot) : await this.adapter.inspect());
+    }, this.requireAtomicCheckpoint);
   }
 
   private assertPreflightSafe(preflight: RecoveryPreflight): void {
@@ -303,11 +304,16 @@ export class FiberContinuity {
       const decoded = await decryptArchive(archive, password);
       this.assertNativeBytes(decoded.nativeBackup);
       safeProgress(progress, "inspecting-target", "Inspecting current recovery target.");
-      const target = await this.adapter.inspect();
+      const target = this.adapter.inspectRestoreTarget
+        ? await this.adapter.inspectRestoreTarget(decoded.snapshot) : await this.adapter.inspect();
       safeProgress(progress, "preflight", "Checking network, version and target safety.");
       this.assertPreflightSafe(await this.preflightDecoded(decoded.snapshot, target));
-      safeProgress(progress, "capturing-rollback", "Capturing pre-mutation rollback checkpoint.");
-      const rollback = await this.prepareRollback(target);
+      const isCold = this.requireAtomicCheckpoint && !!this.adapter.prepareColdRestore;
+      safeProgress(progress, "capturing-rollback", isCold
+        ? "Revalidating stopped, empty IndexedDB profile before mutation."
+        : "Capturing pre-mutation rollback checkpoint.");
+      if (isCold) await this.adapter.prepareColdRestore!(decoded.snapshot, target);
+      const rollback = isCold ? undefined : await this.prepareRollback(target);
       const marker: TransactionMarker = {
         schemaVersion: 1,
         operationId: crypto.randomUUID(), startedAt: new Date().toISOString(), stage: "prepared"
@@ -327,6 +333,11 @@ export class FiberContinuity {
         after = await this.waitForStableRecovery(decoded.snapshot);
         this.mark(marker, "verifying");
       } catch (error) {
+        if (!rollback) {
+          this.quarantine(marker);
+          throw new ContinuityError("COLD_RESTORE_UNVERIFIED",
+            `Cold IndexedDB restore was interrupted. Do not start or use this profile until a manual integrity investigation. ${message(error)}`, true);
+        }
         return this.rollbackAfterFailure(rollback, target, error, marker, progress);
       }
       safeProgress(progress, "verifying", "Comparing recovered state against authenticated source.");
@@ -335,6 +346,12 @@ export class FiberContinuity {
       catch (error) {
         this.quarantine(marker);
         throw new ContinuityError("RECOVERY_VERIFICATION_FAILED", `Verification failed after mutation: ${message(error)}`, true);
+      }
+      if (this.requireAtomicCheckpoint) {
+        // Matching *local* records and normal startup never prove peer commitment safety.
+        report.checks.push({ key: "peer-channel-safety", label: "Peer/channel state safety", status: "unknown",
+          detail: "An authenticated cold database and matching local records do not establish current peer commitments or on-chain safety." });
+        if (report.overall === "healthy") report.overall = "degraded";
       }
       if (report.overall === "healthy") {
         this.journal.clear();

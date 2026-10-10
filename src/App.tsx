@@ -17,11 +17,12 @@ import ArchiveStatusCard from "./components/ArchiveStatusCard";
 import StateComparison from "./components/StateComparison";
 import RecoveryProgress from "./components/RecoveryProgress";
 import RestoreConfirmDialog from "./components/RestoreConfirmDialog";
+import ColdStorageLab from "./components/ColdStorageLab";
 
 const APP_VERSION = packageJson.version;
 const DEMO_PASSWORD = "fiber-demo-2026";
 
-type AppView = "overview" | "protect" | "recover" | "evidence" | "demo";
+type AppView = "overview" | "protect" | "recover" | "evidence" | "demo" | "storage";
 
 type ArchiveOrigin = "created" | "imported" | null;
 
@@ -53,7 +54,8 @@ const navigation: Array<{ id: AppView; label: string; description: string }> = [
   { id: "protect", label: "Create backup", description: "Protect the current state" },
   { id: "recover", label: "Recover", description: "Restore from an archive" },
   { id: "evidence", label: "Evidence", description: "Verification and reports" },
-  { id: "demo", label: "Demo lab", description: "Simulated failure scenarios" }
+  { id: "demo", label: "Demo lab", description: "Simulated failure scenarios" },
+  { id: "storage", label: "IndexedDB lab", description: "Real cold database round trip" }
 ];
 
 function isPreflightSafe(value: RecoveryPreflight | null) {
@@ -530,6 +532,8 @@ export default function App() {
               </section>
             </>
           )}
+
+          {view === "storage" && <ColdStorageLab />}
 
           {view === "demo" && (
             <>

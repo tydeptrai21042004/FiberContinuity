@@ -1,3 +1,12 @@
+## v0.6.0 — 2026-10-10
+
+- Added cold whole-database IndexedDB export/restore with strict schema, value encoding, size bounds, checksum and post-write readback.
+- Added `ColdFiberHost` stop/fence/lease/persisted-identity integration contract; the public app does not invent unavailable upstream APIs.
+- Added an app-owned IndexedDB lab that exercises genuine browser storage without touching a Fiber node.
+- Added offline target assessment/recheck; blocked existing database overwrites; introduced quarantined, no-rollback behavior for cold restores.
+- Never report authoritative peer/channel safety from matching local snapshots alone.
+- Added recovery-policy regression tests and explicit validation/limitations documentation.
+
 ## v0.5.0 safety follow-up patch (2026-10-08)
 
 - Verify adapter identity and exact Fiber runtime version after restore; block cross-adapter source/target preflight.

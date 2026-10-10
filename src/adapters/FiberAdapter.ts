@@ -24,6 +24,10 @@ export interface FiberAdapter {
   /** Upstream-defined exclusive lease spanning native checkpoint, mutation and reconciliation. */
   acquireRecoveryLease?(): Promise<() => void | Promise<void>>;
   inspect(): Promise<FiberSnapshot>;
+  /** Cold profiles may have no startable node: inspect trusted offline identity/config instead. */
+  inspectRestoreTarget?(source: FiberSnapshot): Promise<FiberSnapshot>;
+  /** Revalidate a stopped, empty storage target before the first destructive operation. */
+  prepareColdRestore?(source: FiberSnapshot, target: FiberSnapshot): Promise<void>;
   exportNativeBackup(): Promise<Uint8Array>;
   restoreNativeBackup(data: Uint8Array): Promise<void>;
   restartAfterRestore?(): Promise<void>;

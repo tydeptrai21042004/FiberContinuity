@@ -1,3 +1,5 @@
+> **v0.6 update (10 October 2026):** Whole-node cold IndexedDB transport and an app-owned browser storage lab have been added in response to upstream reviewer guidance. The main backup/recover UI still uses a deterministic demo, not a live Fiber checkpoint service. The real host lifecycle and peer/channel safety remain unverified. See [Cold recovery integration](docs/COLD_RECOVERY_V06.md) and [Validation status](docs/VALIDATION_V06.md).
+
 # FiberContinuity
 
 > **v0.5.0 safety-hardened recovery UI reference** — separate backup/recovery/evidence workflows, explicit archive authentication and target preflight, destructive-action confirmation, real restore-stage progress, and an isolated deterministic demo lab. The deployed reference remains adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
