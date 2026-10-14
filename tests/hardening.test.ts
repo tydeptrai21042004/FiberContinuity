@@ -180,9 +180,8 @@ describe("strict live readiness and network identity", () => {
     const source = new DemoFiberAdapter();
     const archive = await createArchive(await source.inspect(), await source.exportNativeBackup(), PASS);
     const continuity = new FiberContinuity(adapter);
-    const preflight = await continuity.preflight(archive, PASS);
-    expect(preflight.targetSafety.status).toBe("review");
-    await expect(continuity.restore(archive, PASS)).rejects.toThrow(/exclusive storage lease|review target/i);
+    await expect(continuity.preflight(archive, PASS)).rejects.toThrow(/exclusive storage lease/i);
+    await expect(continuity.restore(archive, PASS)).rejects.toThrow(/exclusive storage lease/i);
   });
 });
 

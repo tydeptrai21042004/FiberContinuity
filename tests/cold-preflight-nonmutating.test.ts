@@ -32,12 +32,22 @@ describe("cold preflight never stops running nodes", () => {
     await expect(recovery.inspectRestoreTarget!({} as never)).rejects.toThrow(/stop explicitly/);
     expect(stop).not.toHaveBeenCalled();
   });
+  it("fails closed for malformed source snapshots instead of throwing TypeError", async () => {
+    const h=host();
+    const {assessRestoreTarget}=createIndexedDbColdHooks(h);
+    const result=await assessRestoreTarget({nodeId:h.nodeId} as FiberSnapshot, {} as FiberSnapshot);
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toMatch(/invalid|incomplete/i);
+  });
   it("still blocks occupied database profiles", async () => {
     const h=host();
     const spy=vi.spyOn(IndexedDbColdStore.prototype,"presence").mockResolvedValue("occupied");
     try {
       const hooks=createIndexedDbColdHooks(h);
-      const source={nodeId:h.nodeId, network:"testnet",networkIdentity:h.networkIdentity,fiberVersion:h.fiberVersion} as never;
+      const source: FiberSnapshot = { nodeId:h.nodeId, network:"testnet", networkIdentity:h.networkIdentity,
+        fiberVersion:h.fiberVersion, adapter:"fiber-js", capturedAt:new Date().toISOString(),
+        capabilities:{channels:"full",payments:"unavailable",invoices:"unavailable"},
+        channels:[],payments:[],invoices:[] };
       expect((await hooks.assessRestoreTarget(source, source)).status).toBe("blocked");
     } finally {spy.mockRestore();}
   });

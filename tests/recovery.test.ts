@@ -55,7 +55,7 @@ describe("continuity flow", () => {
     const source = new DemoFiberAdapter();
     const archive = await new FiberContinuity(source).createBackup("very-good-password");
     const target = new ForeignLiveTargetAdapter();
-    const continuity = new FiberContinuity(target);
+    const continuity = new FiberContinuity(target, { requireAtomicCheckpoint: false });
 
     await expect(continuity.restore(archive, "very-good-password")).rejects.toThrow(/destructive restore|target/i);
   });
@@ -173,7 +173,7 @@ describe("additional fail-closed restore guards", () => {
       invoices: []
     };
     const target = new IncompleteVisibilitySameIdentityTarget(targetSnapshot);
-    const continuity = new FiberContinuity(target);
+    const continuity = new FiberContinuity(target, { requireAtomicCheckpoint: false });
 
     const preflight = await continuity.preflight(archive, "very-good-password");
     expect(preflight.targetSafety.status).toBe("review");

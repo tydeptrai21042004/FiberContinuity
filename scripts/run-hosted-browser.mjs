@@ -31,6 +31,7 @@ let report = {
   address: settings.watchedAddress, runId, mode: 'disposable-full-cycle',
   checks: Object.fromEntries(checkNames.map(name => [name, false])),
   failureStage: null, failureCode: null,
+  browserDiagnostic: null,
 };
 let failed = true;
 let stage = 'deployment';
@@ -84,6 +85,14 @@ try {
   failed = requiredChecks.some(name => !report.checks[name]);
   if (failed) {
     markFailure(requiredChecks.find(name => !report.checks[name]), 'BROWSER_TEST_INCOMPLETE');
+    // Read the operator-facing status, but publish only an allowlisted category.
+    // Raw UI error text is NOT exported: it can contain RPC URLs or configuration.
+    const status = await page.getByText(/Browser smoke incomplete:/i).first().innerText().catch(() => '');
+    report.browserDiagnostic = /cross-origin|SharedArrayBuffer/i.test(status) ? 'BROWSER_ISOLATION'
+      : /RPC|fetch|network|CORS|synchron/i.test(status) ? 'TESTNET_RPC_OR_CONNECTIVITY'
+      : /wasm|fiber|start|worker/i.test(status) ? 'FIBER_WASM_STARTUP'
+      : /IndexedDB|database|storage/i.test(status) ? 'BROWSER_STORAGE'
+      : 'UNKNOWN_BROWSER_FAILURE';
     // This is not a false PASS: the first incomplete stage is recorded.
     console.error(`Hosted Fiber test incomplete at stage: ${report.failureStage}`);
   } else {

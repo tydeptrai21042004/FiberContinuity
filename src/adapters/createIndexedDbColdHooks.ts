@@ -53,6 +53,11 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
     };
   }
   async function assess(source: FiberSnapshot): Promise<RestoreTargetAssessment> {
+    if (!source || typeof source !== "object" || !source.capabilities ||
+        !Array.isArray(source.channels) ||
+        !["full", "metadata", "unavailable"].includes(source.capabilities.channels)) {
+      return { status: "blocked", reason: "Invalid or incomplete source snapshot; recovery cannot be assessed." };
+    }
     if (source.capabilities.channels === "unavailable" || source.channels.length !== 0) {
       return { status: "blocked", reason: "This cold browser integration supports ONLY a completely enumerated zero-channel source node, never funded-channel restoration." };
     }
@@ -94,7 +99,12 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
     },
     async prepareColdRestore(source, target) {
       await host.stopAndFence();
-      if (source.capabilities.channels === "unavailable" || source.channels.length !== 0) {
+      if (!source || typeof source !== "object" || !source.capabilities ||
+        !Array.isArray(source.channels) ||
+        !["full", "metadata", "unavailable"].includes(source.capabilities.channels)) {
+      return { status: "blocked", reason: "Invalid or incomplete source snapshot; recovery cannot be assessed." };
+    }
+    if (source.capabilities.channels === "unavailable" || source.channels.length !== 0) {
         throw new Error("This experimental cold adapter cannot restore a source with channels or uninspectable channel state.");
       }
       if (target.nodeId !== host.nodeId || target.networkIdentity !== host.networkIdentity ||
