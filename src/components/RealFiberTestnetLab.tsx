@@ -14,6 +14,7 @@ import {
   type ColdRecoveryJournal
 } from "../core/coldRecoveryJournal";
 
+declare const __HOSTED_SOURCE_FINGERPRINT__: string;
 const makePrefix = () => `fc-testnet-${crypto.randomUUID()}`;
 const hex = (bytes: Uint8Array) => [...bytes].map(v => v.toString(16).padStart(2, "0")).join("");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -296,6 +297,7 @@ export default function RealFiberTestnetLab() {
         <button className="primary full-width" data-testid="run-hosted-smoke" disabled={busy || host.current?.running} onClick={() => void runHostedSmoke("non-destructive-smoke")}>
           Auto-run safe Fiber testnet smoke (zero-channel, no deletion)
         </button>
+        <span hidden data-testid="hosted-build-fingerprint">{__HOSTED_SOURCE_FINGERPRINT__}</span>
         <button className="ghost full-width" data-testid="run-hosted-full-cycle" disabled={busy || host.current?.running} onClick={() => void runHostedSmoke("disposable-full-cycle")}>
           Auto-run isolated zero-channel FULL recovery (deletes ONLY newly-created disposable profile)
         </button>

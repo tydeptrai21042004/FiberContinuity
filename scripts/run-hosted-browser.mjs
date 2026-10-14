@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 import settings from '../public-testnet-config.json' with { type: 'json' };
 import pkg from '../package.json' with { type: 'json' };
+import { sourceFingerprint } from './source-fingerprint.mjs';
 
 const site = process.env.FIBER_CONTINUITY_URL || 'https://fiber-continuity.vercel.app';
 if (!/^https:\/\/[a-zA-Z0-9.-]+\/?$/.test(site)) {
@@ -35,7 +36,8 @@ const storageReasonCodes = new Set([
   'COLD_STORE_SCHEMA', 'COLD_STORE_UNSUPPORTED_VALUE', 'COLD_STORE_LIMIT',
   'COLD_STORE_TRANSACTION', 'COLD_STORE_PRECONDITION', 'COLD_STORE_DISCOVERY',
   'COLD_STORE_OPEN', 'COLD_STORE_CURSOR', 'COLD_STORE_SERIALIZATION',
-  'COLD_STORE_CHECKSUM', 'COLD_STORE_VALIDATION', 'COLD_STORE_UNKNOWN'
+  'COLD_STORE_CHECKSUM', 'COLD_STORE_VALIDATION', 'COLD_STORE_HOST_FENCE',
+  'COLD_STORE_HOST_NAME', 'COLD_STORE_HOST_RELEASE', 'COLD_STORE_UNKNOWN'
 ]);
 const diagnosticPhases = new Set([
   'browser-readiness', 'ckb-rpc-preflight', 'fiber-config-create',
@@ -81,6 +83,22 @@ try {
   const navButton = page.getByRole('button', { name: /Real Fiber testnet/i });
   if (await navButton.count() === 0) throw Error('DEPLOYMENT_OUTDATED');
   await navButton.click();
+  const expectedSource = sourceFingerprint();
+  // Vercel auto-deploys can lag a GitHub push. Wait for the same exact source,
+  // not the shared v1.0.1 UI version. Never run recovery against stale code.
+  let deployedSource = '';
+  for (let attempt = 0; attempt < 13; attempt++) {
+    deployedSource = (await page.getByTestId('hosted-build-fingerprint')
+      .textContent({ timeout: 2500 }).catch(() => ''))?.trim() || '';
+    if (deployedSource === expectedSource) break;
+    if (attempt === 12) {
+      console.error(`Browser deployment source mismatch (CI ${expectedSource.slice(0, 12)}, Vercel ${deployedSource.slice(0, 12) || 'missing'}).`);
+      throw Error('DEPLOYMENT_OUTDATED');
+    }
+    await page.waitForTimeout(10_000);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.getByRole('button', { name: /Real Fiber testnet/i }).click();
+  }
   const runButton = page.getByTestId('run-hosted-full-cycle');
   if (await runButton.count() === 0) throw Error('DEPLOYMENT_OUTDATED');
 

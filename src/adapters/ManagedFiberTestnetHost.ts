@@ -6,6 +6,7 @@
  * Do not remove the zero-channel guard without an upstream checkpoint protocol.
  */
 import type { Fiber } from "@nervosnetwork/fiber-js";
+import { ContinuityError } from "../core/errors";
 import { browserFiberTestnetConfig } from "./browserFiberConfig";
 import type { FiberSnapshot } from "../core/types";
 import type { FiberLike } from "./FiberJsAdapter";
@@ -282,9 +283,25 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   }
   /** Used by the browser lab, not by the live engine: stopped complete DB transport. */
   async withColdStore<T>(task: (store: IndexedDbColdStore) => Promise<T>): Promise<T> {
-    const release = await this.acquireExclusiveRecoveryLease();
-    try { return await task(new IndexedDbColdStore(this.databaseName, () => this.assertOfflineAndExclusive())); }
-    finally { await release(); }
+    let release: () => Promise<void>;
+    try { release = await this.acquireExclusiveRecoveryLease(); }
+    catch { throw new ContinuityError("COLD_STORE_HOST_FENCE",
+      "Exclusive cold-store lease could not be acquired after shutdown.", true); }
+    let result!: T;
+    let failure: unknown;
+    let hasFailure = false;
+    try {
+      let store: IndexedDbColdStore;
+      try { store = new IndexedDbColdStore(this.databaseName, () => this.assertOfflineAndExclusive()); }
+      catch { throw new ContinuityError("COLD_STORE_HOST_NAME",
+        "The discovered Fiber database name cannot be used for cold export.", true); }
+      result = await task(store);
+    } catch (error) { failure = error; hasFailure = true; }
+    try { await release(); }
+    catch { if (!hasFailure) { failure = new ContinuityError("COLD_STORE_HOST_RELEASE",
+      "Exclusive cold-store lease could not be released normally.", true); hasFailure = true; } }
+    if (hasFailure) throw failure;
+    return result;
   }
   /** The saved archive is checked again within the *same* exclusive lease as deletion.
    * This eliminates a time-of-check/time-of-use gap between verification and loss.

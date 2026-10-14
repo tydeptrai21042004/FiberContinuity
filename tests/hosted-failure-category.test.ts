@@ -29,7 +29,8 @@ describe("allowlisted IndexedDB cold-export diagnostics", () => {
   it("reports fixed exporter stages without leaking their underlying exceptions", () => {
     for (const code of ["COLD_STORE_PRECONDITION", "COLD_STORE_DISCOVERY", "COLD_STORE_OPEN",
       "COLD_STORE_CURSOR", "COLD_STORE_SERIALIZATION", "COLD_STORE_CHECKSUM", "COLD_STORE_VALIDATION",
-      "COLD_STORE_UNSUPPORTED_VALUE", "COLD_STORE_LIMIT"] as const) {
+      "COLD_STORE_UNSUPPORTED_VALUE", "COLD_STORE_LIMIT",
+      "COLD_STORE_HOST_FENCE", "COLD_STORE_HOST_NAME", "COLD_STORE_HOST_RELEASE"] as const) {
       expect(classifyColdExportFailure(new ContinuityError(code, "private https://example.test/?secret=abc"))).toBe(code);
     }
     expect(classifyColdExportFailure({code: "COLD_STORE_CURSOR", message: "untrusted"})).toBe("COLD_STORE_UNKNOWN");

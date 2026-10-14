@@ -15,7 +15,7 @@
     "test:coverage": "vitest run --coverage",
     "check": "npm run typecheck && vitest run",
     "typecheck": "tsc -b --pretty false",
-    "test:hosted-api": "node --test tests/hosted-api.test.mjs",
+    "test:hosted-api": "node --test tests/hosted-api.test.mjs tests/hosted-source-fingerprint.test.mjs",
     "test:hosted-browser": "node scripts/run-hosted-browser.mjs"
   },
   "dependencies": {
