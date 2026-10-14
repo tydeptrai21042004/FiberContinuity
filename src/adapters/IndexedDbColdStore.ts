@@ -177,8 +177,20 @@ function iterate(store: IDBObjectStore, entry: StoreSchema, counter: { value: nu
 async function sha256(value: string): Promise<string> {
   return b64(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))));
 }
-function assertName(name: string): void {
-  if (!/^[A-Za-z0-9_.:-]{1,150}$/.test(name)) throw new Error("A stable, explicit IndexedDB name is required.");
+/**
+ * An IndexedDB database name is an opaque DOMString, NOT a filesystem path.
+ * Fiber 0.9.1 derives its database name from the supplied profile prefix and
+ * its storage path; that name may legitimately contain '/' or other printable
+ * punctuation. Restrict length/control characters, not path separators.
+ *
+ * Profile ownership and whole-database identity are checked separately by
+ * ManagedFiberTestnetHost and validateCore (exact dump.database match).
+ */
+export function assertColdDatabaseName(name: unknown): asserts name is string {
+  if (typeof name !== "string" || name.length < 1 || name.length > 512 ||
+      !/^[\x20-\x7e]+$/.test(name)) {
+    throw new Error("A nonempty, printable, bounded IndexedDB database name is required.");
+  }
 }
 function connect(name: string, version?: number, upgrade?: (db: IDBDatabase, tx: IDBTransaction) => void): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -283,7 +295,7 @@ function validateCore(dump: CoreDump, expectedName: string): void {
   }
 }
 export class IndexedDbColdStore {
-  constructor(readonly databaseName: string, private readonly assertOffline: () => Promise<void>) { assertName(databaseName); }
+  constructor(readonly databaseName: string, private readonly assertOffline: () => Promise<void>) { assertColdDatabaseName(databaseName); }
   private async existing(): Promise<boolean> {
     if (typeof indexedDB.databases !== "function") throw new Error("Browser does not support IndexedDB.databases(); safe absent-database detection is unavailable.");
     const databases = await indexedDB.databases();

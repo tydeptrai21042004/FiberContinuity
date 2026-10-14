@@ -231,3 +231,16 @@ See [PATCH_NOTES.md](PATCH_NOTES.md) for recovery locks, operation journaling, r
 The **Real Fiber testnet** navigation entry uses actual pinned `@nervosnetwork/fiber-js@0.9.1` WASM and an independently discovered, strictly schema-checked IndexedDB database. It can create encrypted zero-channel whole-node backups, run controlled lab-only data-loss/restore/readback checks, restart using an explicitly supplied original Fiber and CKB identities and CKB signing keys, optionally connect WSS testnet peers, and export redacted evidence. The main dashboard remains a deterministic demo; the real panel is deliberately separate and opt-in.
 
 **Important**: stock Fiber JS 0.9.1 still does **not** expose a public atomic checkpoint/flush acknowledgement. Never restore funded channel states with this experimental tool. Real testnet success is only established by executing the browser lab against reachable RPC and WSS endpoints, not by compiling the source. See [v0.7 integration and walkthrough](docs/REAL_FIBER_TESTNET_V07.md).
+
+### CKBuilder #41: real-node evidence boundary
+
+The reviewed recovery target is a **complete, stopped Fiber JS v0.9.1 IndexedDB
+profile**. As advised by Fiber maintainers, partial channel restoration is not
+supported. The real-browser lab is limited to a disposable, explicitly unfunded
+Testnet profile with zero observed channels. Full database export and cold restore
+remain experimental; `Fiber.stop()` does not establish a documented durable flush
+barrier, and the app must not be used for funded-channel recovery.
+
+For the reviewer-facing progress statement, actual hosted test acceptance criteria,
+and the response to the upstream guidance, see
+[`REVIEWER_UPDATE_ISSUE_41.md`](REVIEWER_UPDATE_ISSUE_41.md).
