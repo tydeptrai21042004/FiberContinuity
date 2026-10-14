@@ -1,0 +1,6 @@
+{
+  "network": "ckb_testnet",
+  "watchedAddress": "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqw8vkvkyscfjke44p3rqcq38amqy8emueq5qqfnz",
+  "rpcUrl": "https://testnet.ckbapp.dev/",
+  "explorerOrigin": "https://pudge.explorer.nervos.org"
+}

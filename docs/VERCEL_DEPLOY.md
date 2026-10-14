@@ -1,5 +1,13 @@
 # Vercel deployment
 
+**Current instructions (v1.0):** Use [HOSTED_AUTOMATION_V10.md](HOSTED_AUTOMATION_V10.md). The project now includes three Vercel Functions and a daily cron schedule, in addition to the static Vite frontend. Production needs CRON_SECRET and EVIDENCE_INGEST_TOKEN; do not expose either under VITE_.
+
+---
+
+## Historical v0.x deployment notes (superseded for hosted automation)
+
+# Vercel deployment
+
 
 ## Runtime
 

@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "source_version": "0.9.0",
+  "updated_or_added_files": 18,
+  "removed_files": [
+    "PATCH_V09_MANIFEST.json"
+  ],
+  "files": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/hosted-testnet.yml",
+    "CHANGELOG.md",
+    "README.md",
+    "RELEASE_NOTES_V10.md",
+    "UPDATE_FROM_V09.md",
+    "api/cron-watch.mjs",
+    "api/evidence.mjs",
+    "api/watch-status.mjs",
+    "docs/HOSTED_AUTOMATION_V10.md",
+    "docs/VERCEL_DEPLOY.md",
+    "package.json",
+    "public-testnet-config.json",
+    "scripts/run-hosted-browser.mjs",
+    "server/ckbMonitor.mjs",
+    "src/components/RealFiberTestnetLab.tsx",
+    "tests/hosted-api.test.mjs",
+    "vercel.json"
+  ],
+  "verification": {
+    "hosted_api_tests": "11 passing; mocked RPC, not a live testnet result",
+    "typescript_syntax": "51 TS/TSX files transpiled; dependency-based typecheck pending",
+    "full_browser": "requires deployed workflow run; not executed in this environment"
+  }
+}

@@ -1,4 +1,8 @@
-# FiberContinuity v0.8 — whole-node recovery safeguards
+> **v1.0.0 hosted automation:** The project can now monitor the user-supplied public CKB testnet address daily through Vercel Cron and run a disposable zero-channel Fiber WASM backup → simulated loss → restore → restart test through GitHub Actions. These are not proofs of funded-channel recovery or an end-to-end destructive restore. See [hosted setup](docs/HOSTED_AUTOMATION_V10.md) and [release notes](RELEASE_NOTES_V10.md).
+
+# FiberContinuity v0.9.0 — whole-node recovery safeguards
+
+**Latest reviewer changes:** the real testnet lab verifies the actual CKB chain and browser readiness before startup, checks downloaded archives under the same lock as simulated deletion, supports an absent-only interrupted restore retry, and exports integrity-linked redacted evidence. See [testnet setup](docs/TESTNET_SETUP_V09.md) and [v0.9 release notes](RELEASE_NOTES_V09.md). Funded-channel restoration is NOT supported.
 
 **Scope:** opt-in Fiber JS v0.9.1 WASM **testnet, zero-channel** cold backup and restore experiments; production-style UI remains a deterministic demo. A complete IndexedDB readback and successful restart **do not establish funded-channel safety**. No mainnet funds, live channels or individual-channel restores are supported. See [Implementation of upstream reviewer feedback](docs/UPSTREAM_REVIEW_IMPLEMENTATION_V08.md) and [v0.8 validation](docs/VALIDATION_V08.md).
 

@@ -1,3 +1,12 @@
+## v1.0.0 — Hosted testnet monitoring and safe browser smoke
+
+See [RELEASE_NOTES_V10.md](RELEASE_NOTES_V10.md). Adds public-address watch-only monitor, protected daily Vercel Cron, secret-protected redacted evidence logs, and GitHub-hosted Chromium test automation. The hosted full-cycle test deletes only its newly-created zero-channel disposable profile; it never handles funded channels or existing user storage.
+
+## v0.9.0 — Testnet readiness, atomic deletion guard and evidence
+
+- Real RPC chain verification, browser storage readiness, safer archived-profile deletion, interrupted absent-target retry, stronger validation and SHA-256 evidence exports.
+- Review scope remains zero-channel testnet; no funded-channel recovery assurances.
+
 ## v0.6.0 — 2026-10-10
 
 - Added cold whole-database IndexedDB export/restore with strict schema, value encoding, size bounds, checksum and post-write readback.
