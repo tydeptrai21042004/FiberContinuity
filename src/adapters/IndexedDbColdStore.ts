@@ -50,7 +50,7 @@ function unb64(value: string): Uint8Array {
 }
 function encode(value: unknown, ancestors = new Set<object>(), depth = 0): Encoded {
   if (depth > 64) throw new Error("IndexedDB value nesting limit exceeded.");
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value as Primitive;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error("Non-finite IndexedDB number is unsupported.");
     return { t: "number", v: value };
@@ -85,7 +85,7 @@ function encode(value: unknown, ancestors = new Set<object>(), depth = 0): Encod
 }
 function decode(value: Encoded, depth = 0): unknown {
   if (depth > 64) throw new Error("Cold backup nesting limit exceeded.");
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value as Primitive;
   if (!value || typeof value !== "object") throw new Error("Malformed backup encoded value.");
   switch (value.t) {
     case "number": if (!Number.isFinite(value.v)) throw new Error("Invalid number."); return value.v;
@@ -184,6 +184,37 @@ function connect(name: string, version?: number, upgrade?: (db: IDBDatabase, tx:
     request.onsuccess = () => resolve(request.result);
   });
 }
+/** Reject malformed or repeated primary keys BEFORE a destructive transaction. */
+function primaryKeySignature(encoded: Encoded, depth = 0): string {
+  if (depth > 64) throw new Error("IndexedDB primary key exceeds nesting limit.");
+  if (typeof encoded === "string") return JSON.stringify(["string", encoded]);
+  if (!encoded || typeof encoded !== "object") throw new Error("Unsupported IndexedDB primary key type.");
+  switch (encoded.t) {
+    case "number":
+      if (!Number.isFinite(encoded.v)) throw new Error("Invalid numeric primary key.");
+      return JSON.stringify(["number", encoded.v]);
+    case "date": {
+      const millis = new Date(encoded.v).getTime();
+      if (!Number.isFinite(millis)) throw new Error("Invalid date primary key.");
+      return JSON.stringify(["date", millis]);
+    }
+    case "binary": {
+      // All ArrayBuffer and ArrayBufferView keys compare by underlying bytes.
+      if (encoded.type !== "ArrayBuffer" && encoded.type !== "DataView" &&
+          !["Uint8Array", "Uint8ClampedArray", "Int8Array", "Uint16Array", "Int16Array",
+            "Uint32Array", "Int32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array"].includes(encoded.type)) {
+        throw new Error("Unsupported binary primary key.");
+      }
+      unb64(encoded.v);
+      return JSON.stringify(["binary", encoded.v]);
+    }
+    case "array":
+      if (!Array.isArray(encoded.v)) throw new Error("Malformed array primary key.");
+      return JSON.stringify(["array", encoded.v.map(k => primaryKeySignature(k, depth + 1))]);
+    default: throw new Error("Backup has an IndexedDB primary key with an unsupported type.");
+  }
+}
+
 function validateCore(dump: CoreDump, expectedName: string): void {
   if (dump.format !== FORMAT || dump.version !== 1 || dump.database !== expectedName ||
       !Number.isSafeInteger(dump.databaseVersion) || dump.databaseVersion < 1 || !Array.isArray(dump.stores) || dump.stores.length < 1 || dump.stores.length > 100) {
@@ -196,13 +227,23 @@ function validateCore(dump: CoreDump, expectedName: string): void {
     names.add(store.name);
     if (store.keyPath !== null && typeof store.keyPath !== "string" &&
         !(Array.isArray(store.keyPath) && store.keyPath.every((key) => typeof key === "string"))) throw new Error("Invalid store key path.");
+    const indexNames = new Set<string>();
     for (const index of store.indexes) {
-      if (!index || typeof index.name !== "string" || !index.name || typeof index.unique !== "boolean" || typeof index.multiEntry !== "boolean" ||
-          !(typeof index.keyPath === "string" || (Array.isArray(index.keyPath) && index.keyPath.every((key) => typeof key === "string")))) throw new Error("Invalid index schema.");
+      if (!index || typeof index.name !== "string" || !index.name || indexNames.has(index.name) ||
+          typeof index.unique !== "boolean" || typeof index.multiEntry !== "boolean" ||
+          !(typeof index.keyPath === "string" || (Array.isArray(index.keyPath) && index.keyPath.every((key) => typeof key === "string")))) throw new Error("Invalid or duplicate index schema.");
+      indexNames.add(index.name);
     }
     records += store.entries.length;
     if (records > MAX_RECORDS) throw new Error("Cold backup record limit exceeded.");
-    for (const entry of store.entries) { decode(entry.key); decode(entry.value); }
+    const keys = new Set<string>();
+    for (const entry of store.entries) {
+      if (!entry || typeof entry !== "object") throw new Error("Malformed IndexedDB record.");
+      const signature = primaryKeySignature(entry.key);
+      if (keys.has(signature)) throw new Error("Duplicate primary key in cold backup. Restore refused before any write.");
+      keys.add(signature);
+      decode(entry.key); decode(entry.value);
+    }
   }
 }
 export class IndexedDbColdStore {
@@ -253,6 +294,21 @@ export class IndexedDbColdStore {
       if (output.byteLength > MAX_BYTES) throw new Error("Cold database export exceeds safe size limit.");
       return output;
     } finally { db.close(); }
+  }
+  /**
+   * Two full, separate stopped-database reads must match before encryption.
+   * This detects some residual writes, but is NOT a durable flush guarantee and
+   * does not replace stopping all writers or an upstream atomic checkpoint.
+   */
+  async exportStableBytes(): Promise<{ bytes: Uint8Array; dump: ColdDatabaseDump }> {
+    const first = await this.exportBytes();
+    const initial = await this.validateBytes(first);
+    const second = await this.exportBytes();
+    const final = await this.validateBytes(second);
+    if (initial.checksum !== final.checksum) {
+      throw new ContinuityError("UNSTABLE_COLD_STORE", "The stopped IndexedDB contents changed across two complete reads. Do not archive or restore this profile.", true);
+    }
+    return { bytes: second, dump: final };
   }
   async validateBytes(bytes: Uint8Array): Promise<ColdDatabaseDump> {
     if (!(bytes instanceof Uint8Array) || bytes.length < 40 || bytes.length > MAX_BYTES) throw new Error("Invalid cold database backup size.");

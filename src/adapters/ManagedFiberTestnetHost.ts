@@ -13,6 +13,7 @@ import { FiberJsAdapter } from "./FiberJsAdapter";
 import { IndexedDbColdStore } from "./IndexedDbColdStore";
 import { assertFiber091StorageContract } from "./Fiber091StorageContract";
 import { createIndexedDbColdHooks, type ColdFiberHost } from "./createIndexedDbColdHooks";
+import { assertStartAllowed } from "../core/coldRecoveryJournal";
 
 export const PINNED_FIBER_VERSION = "0.9.1";
 const PREFIX_RE = /^fc-testnet-[a-z0-9-]{8,90}$/;
@@ -81,6 +82,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   private activeRelease: (() => void) | null = null;
   private coldLeaseRelease: (() => void) | null = null;
   private lastSnapshot: FiberSnapshot | null = null;
+  private lossSimulationPermitted = false;
   private readonly config: string;
   private readonly fiberKey: Uint8Array;
   private readonly ckbKey: Uint8Array;
@@ -119,6 +121,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   }
   get running(): boolean { return this.fiber !== null; }
   get storageKnown(): boolean { return this.databaseName.length > 0; }
+  get canSimulateLoss(): boolean { return !this.running && this.lossSimulationPermitted && this.lastSnapshot !== null; }
   get snapshot(): FiberSnapshot | null { return this.lastSnapshot; }
   private ensureNoChannels(snapshot: FiberSnapshot): void {
     if (snapshot.capabilities.channels === "unavailable" || snapshot.channels.length > 0) {
@@ -126,8 +129,9 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     }
   }
   /** Discover only an unambiguously new, solely host-owned IndexedDB profile. */
-  async start(): Promise<FiberSnapshot> {
+  async start(recoveryRestart = false): Promise<FiberSnapshot> {
     requireBrowser();
+    assertStartAllowed(this.prefix, recoveryRestart);
     if (this.fiber) throw new Error("Node already running.");
     if (this.coldLeaseRelease) throw new Error("Cold recovery lease is active.");
     const release = await exclusiveProfile(this.prefix);
@@ -135,6 +139,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     let before: string[];
     try { before = await databases(); }
     catch (error) { this.activeRelease?.(); this.activeRelease = null; throw error; }
+    const freshProfile = !this.databaseName && !this.nodeId;
     if (!this.databaseName && before.some(name => owned(this.prefix, name))) {
       this.activeRelease?.(); this.activeRelease = null;
       throw new Error("Existing IndexedDB namespace found for this profile. Fresh experimental profiles must not attach to unreviewed pre-existing state.");
@@ -149,19 +154,27 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
       this.nodeId = snapshot.nodeId;
       const after = await databases();
       const candidates = after.filter(name => owned(this.prefix, name));
-      const novel = after.filter(name => !before.includes(name));
       const scoped = this.databaseName && after.includes(this.databaseName)
-        ? [this.databaseName] : candidates.length ? candidates : novel;
+        ? [this.databaseName] : candidates;
       if (scoped.length !== 1 || (this.databaseName && !scoped.includes(this.databaseName))) {
         throw new Error(`Cannot identify exactly one Fiber IndexedDB database for this isolated profile (candidates=${scoped.length}). Refusing to guess.`);
       }
       this.databaseName = scoped[0];
       this.ensureNoChannels(snapshot);
       this.lastSnapshot = snapshot;
+      this.lossSimulationPermitted = freshProfile;
       return snapshot;
     } catch (error) {
-      await instance.stop().catch(() => {});
+      try { await instance.stop(); }
+      catch (stopError) {
+        // A potentially live worker must not lose its exclusive profile lease.
+        // Keep the handle so a subsequent explicit stop attempt is possible.
+        this.fiber = instance;
+        this.lossSimulationPermitted = false;
+        throw new Error(`Fiber startup failed and worker shutdown is unconfirmed. Recovery is blocked: ${String(error)}; stop error: ${String(stopError)}`);
+      }
       this.fiber = null;
+      this.lossSimulationPermitted = false;
       this.activeRelease?.(); this.activeRelease = null;
       throw error;
     }
@@ -184,16 +197,27 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   }
   async stop(): Promise<void> {
     if (!this.fiber) return;
-    // Capture observable state BEFORE worker termination. No live channel state is accepted.
-    const observed = await this.adapter.inspect();
-    // Stop remains possible even if the node unexpectedly acquires channels.
-    // Such state is explicitly excluded from the cold-backup/restore experiment.
-    this.lastSnapshot = observed;
+    // Observation may fail even when the node still needs to be shut down.
+    // Never let an inspection error prevent explicit worker shutdown.
+    let observed: FiberSnapshot | null = null;
+    let inspectFailure: unknown = null;
+    try { observed = await this.adapter.inspect(); }
+    catch (error) { inspectFailure = error; }
     const fiber = this.fiber;
+    try {
+      await fiber.stop();
+    } catch (error) {
+      // A failed stop is NOT quiescence. Keep the node handle and active lease;
+      // refuse all cold storage operations until the operator resolves the failure.
+      throw new Error(`Fiber.stop() failed; worker shutdown is unconfirmed. Keep profile offline from other tabs. ${String(error)}`);
+    }
     this.fiber = null;
-    try { await fiber.stop(); }
-    finally { this.activeRelease?.(); this.activeRelease = null; }
-    // Upstream stop() does NOT guarantee a flush barrier; verified funded restores stay disabled.
+    this.lastSnapshot = observed;
+    if (!observed) this.lossSimulationPermitted = false;
+    this.activeRelease?.(); this.activeRelease = null;
+    // No pre-stop inspection means no backup or restore authorization.
+    if (inspectFailure) throw new Error(`Fiber stopped, but final channel inspection failed; cold backup is BLOCKED: ${String(inspectFailure)}`);
+    // Upstream stop() does NOT guarantee a flush barrier; funded restores remain disabled.
   }
   /** Quiescent cold mode is never entered implicitly by preflight. */
   async acquireExclusiveRecoveryLease(): Promise<() => void> {
@@ -223,6 +247,24 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     // starts only after an explicit operator release and uses no bootnode connections.
     throw new Error("Restored database remains offline for manual review. Release the cold lease, then explicitly start and inspect. A safe automatic restart is not documented by upstream.");
   }
+  /**
+   * Read-only verification of a previously restored, completely stopped profile.
+   * This permits a journal interrupted AFTER a committed write to resume without
+   * a second write or a destructive clear. No channel-safety claim is implied.
+   */
+  async verifyRestoredBytes(source: Uint8Array): Promise<{ checksum: string; bytes: number }> {
+    return this.withColdStore(async (store) => {
+      const expected = await store.validateBytes(source);
+      assertFiber091StorageContract(expected);
+      const actualBytes = await store.exportBytes();
+      const actual = await store.validateBytes(actualBytes);
+      assertFiber091StorageContract(actual);
+      if (actual.checksum !== expected.checksum) {
+        throw new Error("Restored IndexedDB differs from authenticated archive. Keep profile offline and quarantined.");
+      }
+      return { checksum: actual.checksum, bytes: actualBytes.length };
+    });
+  }
   /** Used by the browser lab, not by the live engine: stopped complete DB transport. */
   async withColdStore<T>(task: (store: IndexedDbColdStore) => Promise<T>): Promise<T> {
     const release = await this.acquireExclusiveRecoveryLease();
@@ -230,6 +272,8 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     finally { release(); }
   }
   async simulateLossForZeroChannelProfile(): Promise<void> {
+    if (!this.canSimulateLoss) throw new Error("Deliberate loss is only allowed for a newly created, observed and stopped lab-owned profile, never an adopted/recovered profile.");
+    assertStartAllowed(this.prefix);
     await this.withColdStore(async store => {
       const state = await store.presence();
       if (state === "absent") throw new Error("No profile database exists.");
@@ -243,6 +287,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
         req.onsuccess = () => resolve();
       });
     });
+    this.lossSimulationPermitted = false;
   }
   /** Cold recovery bootstrap after a page refresh, WITHOUT starting an empty new node. */
   async adoptColdRecoveryProfile(bytes: Uint8Array, snapshot: FiberSnapshot): Promise<void> {
@@ -262,6 +307,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     this.databaseName = dump.database;
     this.nodeId = snapshot.nodeId;
     this.lastSnapshot = snapshot;
+    this.lossSimulationPermitted = false;
   }
   makeRecoveryAdapter(): FiberJsAdapter {
     if (!this.nodeId || !this.databaseName) throw new Error("Start/inspect a real node before using recovery adapters.");

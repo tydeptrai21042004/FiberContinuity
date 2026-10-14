@@ -59,8 +59,9 @@ describe("cold whole-node recovery safety", () => {
     };
     const { assessRestoreTarget } = createIndexedDbColdHooks(host);
     const expected = { ...await new DemoFiberAdapter().inspect(), nodeId: host.nodeId,
-      networkIdentity: host.networkIdentity, adapter: "fiber-js" };
+      networkIdentity: host.networkIdentity, adapter: "fiber-js", channels: [] };
     expect((await assessRestoreTarget(expected, expected)).status).toBe("safe");
+    expect((await assessRestoreTarget({ ...expected, channels: [{ id: "funded", state: "ready" }] }, expected)).status).toBe("blocked");
     expect((await assessRestoreTarget({ ...expected, nodeId: "foreign" }, expected)).status).toBe("blocked");
     presence.mockResolvedValue("occupied");
     expect((await assessRestoreTarget(expected, expected)).status).toBe("blocked");

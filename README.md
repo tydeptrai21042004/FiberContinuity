@@ -1,6 +1,14 @@
+# FiberContinuity v0.8 — whole-node recovery safeguards
+
+**Scope:** opt-in Fiber JS v0.9.1 WASM **testnet, zero-channel** cold backup and restore experiments; production-style UI remains a deterministic demo. A complete IndexedDB readback and successful restart **do not establish funded-channel safety**. No mainnet funds, live channels or individual-channel restores are supported. See [Implementation of upstream reviewer feedback](docs/UPSTREAM_REVIEW_IMPLEMENTATION_V08.md) and [v0.8 validation](docs/VALIDATION_V08.md).
+
+The reviewer identified a supported direction: stop Fiber and all writers, back up or restore **the whole IndexedDB node state**, then allow Fiber's ordinary restart/reestablishment checks without mistaking them for conclusive channel-safety attestation. The current application cannot guarantee an upstream worker-flush barrier and therefore **does not** offer funded-channel recovery. This release adds a persistent mutation/readback/restart journal, non-mutating interruption resumption, saved-archive verification before deliberate testnet-profile deletion, and separate evidence statuses.
+
+---
+
 > **v0.6 update (10 October 2026):** Whole-node cold IndexedDB transport and an app-owned browser storage lab have been added in response to upstream reviewer guidance. The main backup/recover UI still uses a deterministic demo, not a live Fiber checkpoint service. The real host lifecycle and peer/channel safety remain unverified. See [Cold recovery integration](docs/COLD_RECOVERY_V06.md) and [Validation status](docs/VALIDATION_V06.md).
 
-# FiberContinuity
+## Original project overview
 
 > **v0.5.0 safety-hardened recovery UI reference** — separate backup/recovery/evidence workflows, explicit archive authentication and target preflight, destructive-action confirmation, real restore-stage progress, and an isolated deterministic demo lab. The deployed reference remains adapter-backed and does not claim production-fund safety without supported upstream recovery hooks.
 
@@ -107,7 +115,7 @@ fiber-continuity/
 
 ## Local run
 
-Node **24.x** is required for the current Vercel runtime and CI configuration.
+Node **22–24** is supported by the declared `engines` range; use a compatible Node version for Vercel and CI.
 
 ```bash
 npm install

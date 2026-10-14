@@ -53,6 +53,9 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
     };
   }
   async function assess(source: FiberSnapshot): Promise<RestoreTargetAssessment> {
+    if (source.capabilities.channels === "unavailable" || source.channels.length !== 0) {
+      return { status: "blocked", reason: "This cold browser integration supports ONLY a completely enumerated zero-channel source node, never funded-channel restoration." };
+    }
     if (source.network !== "testnet" || source.networkIdentity !== host.networkIdentity || source.nodeId !== host.nodeId || source.fiberVersion !== host.fiberVersion) {
       return { status: "blocked", reason: "Backup network, persisted node identity or pinned runtime is different from this recovery profile." };
     }
@@ -71,15 +74,15 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
       }
       await host.stopAndFence();
       try {
-        const nativeBackup = await store.exportBytes();
-        assertFiber091StorageContract(await store.validateBytes(nativeBackup));
-        return { snapshot, nativeBackup };
+        const stable = await store.exportStableBytes();
+        assertFiber091StorageContract(stable.dump);
+        return { snapshot, nativeBackup: stable.bytes };
       } finally {
         // Host may deliberately remain stopped; no implicit unsafe restart.
         await host.resumeAfterBackup();
       }
     },
-    async exportBackup() { const bytes = await store.exportBytes(); assertFiber091StorageContract(await store.validateBytes(bytes)); return bytes; },
+    async exportBackup() { const stable = await store.exportStableBytes(); assertFiber091StorageContract(stable.dump); return stable.bytes; },
     async inspectRestoreTarget(source) {
       // Preflight is strictly non-mutating: do NOT stop a healthy running node.
       // An operator must stop it first; fail if the host is still active.
@@ -91,6 +94,9 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
     },
     async prepareColdRestore(source, target) {
       await host.stopAndFence();
+      if (source.capabilities.channels === "unavailable" || source.channels.length !== 0) {
+        throw new Error("This experimental cold adapter cannot restore a source with channels or uninspectable channel state.");
+      }
       if (target.nodeId !== host.nodeId || target.networkIdentity !== host.networkIdentity ||
           target.fiberVersion !== host.fiberVersion) throw new Error("Recovery target identity/configuration changed after preflight.");
       const decision = await assess(source);
