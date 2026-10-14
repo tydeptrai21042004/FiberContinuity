@@ -8,6 +8,7 @@ import { assertFiber091StorageContract } from "../adapters/Fiber091StorageContra
 import { verifyCkbTestnetRpc, inspectBrowserRecoveryReadiness, requestDurableBrowserStorage,
   type TestnetRpcCheck, type BrowserRecoveryReadiness } from "../core/testnetReadiness";
 import { buildEvidenceChain, redactEvidenceValue } from "../core/reviewEvidence";
+import { classifyHostedFailure, type HostedFailureCategory } from "../core/hostedFailureCategory";
 import {
   beginColdRestore, readColdJournal, recordColdReadback, recordColdRestart,
   type ColdRecoveryJournal
@@ -23,6 +24,8 @@ type HostedSmokeReport = {
   schema: "fiber-continuity-hosted-evidence-v1";
   source: "interactive-browser" | "github-actions-browser";
   address: string; runId: string; mode: "non-destructive-smoke" | "disposable-full-cycle";
+  failurePhase?: string;
+  failureCategory?: HostedFailureCategory;
   checks: {
     browserReady: boolean; testnetVerified: boolean; actualWasmNodeStarted: boolean;
     zeroChannelsObserved: boolean; workersStopped: boolean;
@@ -148,29 +151,38 @@ export default function RealFiberTestnetLab() {
     const report = blankReport("interactive-browser", mode);
     const prefix = `fc-testnet-autosmoke-${crypto.randomUUID()}`;
     let temporaryHost: ManagedFiberTestnetHost | null = null;
+    // Machine-readable safe phase/category appear in CI evidence; raw error text
+    // stays in the local browser UI and is never sent to the hosted reporter.
+    let phase = "browser-readiness";
     try {
       const browser = await inspectBrowserRecoveryReadiness();
       if (!browser.canRun) throw new Error(`Browser readiness failed: ${browser.warnings.join(" ")}`);
       report.checks.browserReady = true;
+      phase = "ckb-rpc-preflight";
       const rpc = await verifyCkbTestnetRpc(rpcUrl);
       if (rpc.initialBlockDownload) throw new Error("CKB RPC is not synchronized yet.");
       report.checks.testnetVerified = true;
       const tempHex = () => hex(crypto.getRandomValues(new Uint8Array(32)));
       // Ephemeral secrets and passphrase never enter logs, archives or React state.
       const originalNodeSecret = tempHex(), originalCkbSecret = tempHex(), passphrase = `${tempHex()}${tempHex()}`;
+      phase = "fiber-config-create";
       const h = await ManagedFiberTestnetHost.create({prefix, fiberKeyHex:originalNodeSecret,
         ckbKeyHex:originalCkbSecret, ckbRpcUrl:rpcUrl});
       temporaryHost = h;
+      phase = "fiber-wasm-start";
       const started = await h.start();
       report.checks.actualWasmNodeStarted = true;
+      phase = "fiber-observe";
       const observation = await h.observe();
       if (started.capabilities.channels === "unavailable" || started.channels.length !== 0 ||
           observation.snapshot.capabilities.channels === "unavailable" || observation.snapshot.channels.length !== 0) {
         throw new Error("Node has channels or unknown channel state; browser smoke test BLOCKED.");
       }
       report.checks.zeroChannelsObserved = true;
+      phase = "fiber-stop";
       await h.stop();
       report.checks.workersStopped = true;
+      phase = "encrypted-backup";
       const stable = await h.withColdStore(store => store.exportStableBytes());
       assertFiber091StorageContract(stable.dump);
       const encrypted = await createArchive(h.snapshot!, stable.bytes, passphrase);
@@ -178,6 +190,7 @@ export default function RealFiberTestnetLab() {
       const restoredArchive = await decryptArchive(parseArchive(JSON.stringify(encrypted)), passphrase);
       if (restoredArchive.snapshot.nodeId !== started.nodeId) throw new Error("Archive node identity mismatch.");
       report.checks.archiveRoundtrip = true;
+      phase = "cold-readback";
       await h.verifyRestoredBytes(restoredArchive.nativeBackup);
       report.checks.stoppedDatabaseReadback = true;
       if (mode === "disposable-full-cycle") {
@@ -186,16 +199,19 @@ export default function RealFiberTestnetLab() {
           backupChecksum:stable.dump.checksum};
         // Authenticated backup and entire live DB are compared UNDER the same
         // exclusive Web Lock as deletion. Any mismatch aborts without deletion.
+        phase = "disposable-database-delete";
         await h.simulateLossForZeroChannelProfile(restoredArchive.nativeBackup);
         report.checks.disposableProfileDeleted = true;
         await h.withColdStore(async store => {
           if (await store.presence() !== "absent") throw new Error("Disposable loss did not produce an absent target.");
         });
         beginColdRestore(meta);
+        phase = "cold-profile-restore";
         await h.withColdStore(store => store.restoreBytes(restoredArchive.nativeBackup));
         await h.verifyRestoredBytes(restoredArchive.nativeBackup);
         recordColdReadback(meta);
         report.checks.wholeProfileRestored = true;
+        phase = "fiber-wasm-restart";
         const restarted = await h.start(true);
         if (restarted.nodeId !== started.nodeId || restarted.channels.length !== 0 ||
             restarted.capabilities.channels === "unavailable") throw new Error("Restarted identity or zero-channel status differs.");
@@ -208,6 +224,8 @@ export default function RealFiberTestnetLab() {
         setLogStatus("ISOLATED TEST: whole-node loss → restored full IndexedDB → zero-channel restart verified locally. No real wallet or funded channel touched.");
       } else setLogStatus("Browser smoke passed: actual Fiber WASM + full cold archive/readback. No deletion attempted.");
     } catch (error) {
+      report.failurePhase = phase;
+      report.failureCategory = classifyHostedFailure(error);
       setLogStatus(`Browser smoke incomplete: ${errorMessage(error)}`);
     } finally {
       if (temporaryHost?.running) {

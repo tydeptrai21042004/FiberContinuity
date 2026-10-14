@@ -6,7 +6,7 @@
  * Do not remove the zero-channel guard without an upstream checkpoint protocol.
  */
 import type { Fiber } from "@nervosnetwork/fiber-js";
-import { parseDocument } from "yaml";
+import { browserFiberTestnetConfig } from "./browserFiberConfig";
 import type { FiberSnapshot } from "../core/types";
 import type { FiberLike } from "./FiberJsAdapter";
 import { FiberJsAdapter } from "./FiberJsAdapter";
@@ -117,10 +117,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     const { Fiber } = await import("@nervosnetwork/fiber-js");
     const fiber = new Fiber(8 << 20, 8 << 20);
     try {
-      const yaml = parseDocument(fiber.getDefaultConfig("testnet", options.ckbRpcUrl));
-      yaml.setIn(["fiber", "bootnode_addrs"], []);
-      yaml.setIn(["fiber", "announce_listening_addr"], false);
-      const config = yaml.toString({ lineWidth: 0 });
+      const config = browserFiberTestnetConfig(fiber.getDefaultConfig("testnet", options.ckbRpcUrl));
       return new ManagedFiberTestnetHost(options, config, `testnet:fiber-js-0.9.1:config-sha256:${await sha(config)}`);
     } finally { await fiber.stop(); }
   }

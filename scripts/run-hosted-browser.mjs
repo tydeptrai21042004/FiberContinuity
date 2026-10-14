@@ -25,13 +25,24 @@ const stageValues = new Set(['deployment', 'browser-navigation', 'browser-test',
 const codeValues = new Set(['DEPLOYMENT_OUTDATED', 'NAVIGATION_FAILED', 'BROWSER_TEST_TIMEOUT',
   'BROWSER_TEST_INCOMPLETE', 'BROWSER_TEST_ERROR', 'EVIDENCE_INGEST_FAILED']);
 const runId = crypto.randomUUID();
+const diagnosticCategories = new Set([
+  'BROWSER_ISOLATION', 'CKB_RPC_CONNECTIVITY', 'FIBER_CONFIG_INVALID',
+  'FIBER_WASM_ASSET_OR_WORKER', 'FIBER_WASM_STARTUP', 'BROWSER_STORAGE',
+  'RECOVERY_SAFETY_GATE', 'UNKNOWN_BROWSER_FAILURE'
+]);
+const diagnosticPhases = new Set([
+  'browser-readiness', 'ckb-rpc-preflight', 'fiber-config-create',
+  'fiber-wasm-start', 'fiber-observe', 'fiber-stop', 'encrypted-backup',
+  'cold-readback', 'disposable-database-delete', 'cold-profile-restore',
+  'fiber-wasm-restart'
+]);
 let report = {
   schema: 'fiber-continuity-hosted-evidence-v1',
   source: 'github-actions-browser',
   address: settings.watchedAddress, runId, mode: 'disposable-full-cycle',
   checks: Object.fromEntries(checkNames.map(name => [name, false])),
   failureStage: null, failureCode: null,
-  browserDiagnostic: null,
+  browserDiagnostic: null, browserPhase: null,
 };
 let failed = true;
 let stage = 'deployment';
@@ -87,14 +98,13 @@ try {
     markFailure(requiredChecks.find(name => !report.checks[name]), 'BROWSER_TEST_INCOMPLETE');
     // Read the operator-facing status, but publish only an allowlisted category.
     // Raw UI error text is NOT exported: it can contain RPC URLs or configuration.
-    const status = await page.getByText(/Browser smoke incomplete:/i).first().innerText().catch(() => '');
-    report.browserDiagnostic = /cross-origin|SharedArrayBuffer/i.test(status) ? 'BROWSER_ISOLATION'
-      : /RPC|fetch|network|CORS|synchron/i.test(status) ? 'TESTNET_RPC_OR_CONNECTIVITY'
-      : /wasm|fiber|start|worker/i.test(status) ? 'FIBER_WASM_STARTUP'
-      : /IndexedDB|database|storage/i.test(status) ? 'BROWSER_STORAGE'
-      : 'UNKNOWN_BROWSER_FAILURE';
-    // This is not a false PASS: the first incomplete stage is recorded.
-    console.error(`Hosted Fiber test incomplete at stage: ${report.failureStage}`);
+    report.browserDiagnostic = diagnosticCategories.has(result.failureCategory)
+      ? result.failureCategory : 'UNKNOWN_BROWSER_FAILURE';
+    report.browserPhase = diagnosticPhases.has(result.failurePhase)
+      ? result.failurePhase : 'unknown';
+    // Never echo raw UI exceptions, keys or RPC URLs into GitHub artifacts.
+    console.error(`Hosted Fiber test incomplete at stage: ${report.failureStage}; phase: ${report.browserPhase}; category: ${report.browserDiagnostic}`);
+    // This is not a false PASS: the real WASM/whole-profile assertion stays required.
   } else {
     console.log('Hosted Fiber disposable zero-channel full-cycle: PASSED');
   }
