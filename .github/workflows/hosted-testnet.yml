@@ -1,0 +1,33 @@
+name: Hosted Fiber testnet evidence
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "25 4 * * 1" # weekly, UTC; hosted browser is expensive
+permissions:
+  contents: read
+jobs:
+  real-browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install project dependencies
+        run: npm install --no-audit --no-fund
+      - name: Install hosted Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Run disposable zero-channel live Fiber test against Vercel
+        env:
+          FIBER_CONTINUITY_URL: ${{ vars.FIBER_CONTINUITY_URL || 'https://fiber-continuity.vercel.app' }}
+          EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}
+        run: npm run test:hosted-browser
+      - name: Save redacted evidence even when smoke fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiber-hosted-testnet-evidence
+          path: evidence/hosted-browser-evidence.json
+          if-no-files-found: warn
+          retention-days: 30
