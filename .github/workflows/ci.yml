@@ -19,6 +19,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      # This project ZIP does not include an npm lockfile.
+      # Cache only npm's download cache; do not ask setup-node to look for a missing lockfile.
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ matrix.node }}-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-${{ matrix.node }}-
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: TypeScript and unit tests
