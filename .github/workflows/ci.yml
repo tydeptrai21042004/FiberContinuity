@@ -1,11 +1,17 @@
 name: FiberContinuity checks
+
 on:
   push:
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
   unit-and-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         node: [22, 24]
     steps:
@@ -13,17 +19,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Install pinned Fiber JS and project dependencies
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: TypeScript and automated unit tests
+      - name: TypeScript and unit tests
         run: npm run check
-      - name: Hosted API unit tests (no secrets or external network)
+      - name: Hosted API tests
         run: npm run test:hosted-api
-      - name: Vite production build
+      - name: Production build
         run: npm run build
-      - name: Verify no tracked secrets or recovery archives
+      - name: Verify no tracked recovery secrets
         run: |
-          if find . -path './node_modules' -prune -o -type f             \( -name '*.fcr.json' -o -name '.env.local' -o -name '*private-key*' \) -print | grep -q .; then
-            echo 'Sensitive backup/credential-like files found. Review before publication.'
+          if find . -path './node_modules' -prune -o -type f \
+            \( -name '*.fcr.json' -o -name '.env.local' -o -name '*private-key*' \) -print | grep -q .; then
+            echo 'Sensitive backup/credential-like files found.'
             exit 1
           fi
