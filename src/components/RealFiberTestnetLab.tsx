@@ -182,11 +182,14 @@ export default function RealFiberTestnetLab() {
       phase = "fiber-stop";
       await h.stop();
       report.checks.workersStopped = true;
-      phase = "encrypted-backup";
+      phase = "cold-store-export";
       const stable = await h.withColdStore(store => store.exportStableBytes());
+      phase = "cold-store-schema";
       assertFiber091StorageContract(stable.dump);
+      phase = "archive-encryption";
       const encrypted = await createArchive(h.snapshot!, stable.bytes, passphrase);
       report.checks.encryptedColdBackup = true;
+      phase = "archive-decryption";
       const restoredArchive = await decryptArchive(parseArchive(JSON.stringify(encrypted)), passphrase);
       if (restoredArchive.snapshot.nodeId !== started.nodeId) throw new Error("Archive node identity mismatch.");
       report.checks.archiveRoundtrip = true;

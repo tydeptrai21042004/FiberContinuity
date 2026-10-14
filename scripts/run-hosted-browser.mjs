@@ -33,6 +33,7 @@ const diagnosticCategories = new Set([
 const diagnosticPhases = new Set([
   'browser-readiness', 'ckb-rpc-preflight', 'fiber-config-create',
   'fiber-wasm-start', 'fiber-observe', 'fiber-stop', 'encrypted-backup',
+  'cold-store-export', 'cold-store-schema', 'archive-encryption', 'archive-decryption',
   'cold-readback', 'disposable-database-delete', 'cold-profile-restore',
   'fiber-wasm-restart'
 ]);

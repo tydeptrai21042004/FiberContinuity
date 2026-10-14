@@ -37,16 +37,18 @@ async function databases(): Promise<string[]> {
   return (await indexedDB.databases()).flatMap(db => db.name ? [db.name] : []);
 }
 /** Browser Web Lock held across an ACTIVE node lifetime, or across a COLD operation. */
-async function exclusiveProfile(name: string): Promise<() => void> {
+async function exclusiveProfile(name: string): Promise<() => Promise<void>> {
   requireBrowser();
   let unlock!: () => void;
   const untilRelease = new Promise<void>(resolve => { unlock = resolve; });
-  let acquired!: (release: () => void) => void;
+  let acquired!: (release: () => Promise<void>) => void;
   let denied!: (error: Error) => void;
-  const ready = new Promise<() => void>((resolve, reject) => { acquired = resolve; denied = reject; });
-  void navigator.locks.request(`fiber-continuity-profile:${name}`, { mode: "exclusive", ifAvailable: true }, async lock => {
+  const ready = new Promise<() => Promise<void>>((resolve, reject) => { acquired = resolve; denied = reject; });
+  // A Web Lock remains held until the request callback finishes, even after unlock().
+  // Await that completion before immediately acquiring a cold-store lease.
+  const lockRequest = navigator.locks.request(`fiber-continuity-profile:${name}`, { mode: "exclusive", ifAvailable: true }, async lock => {
     if (!lock) { denied(new Error("This profile is in use by another cooperating browser tab.")); return; }
-    acquired(unlock);
+    acquired(async () => { unlock(); await lockRequest; });
     await untilRelease;
   }).catch(error => denied(error instanceof Error ? error : new Error(String(error))));
   return ready;
@@ -81,8 +83,8 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   databaseName = "";
   nodeId = "";
   private fiber: Fiber | null = null;
-  private activeRelease: (() => void) | null = null;
-  private coldLeaseRelease: (() => void) | null = null;
+  private activeRelease: (() => Promise<void>) | null = null;
+  private coldLeaseRelease: (() => Promise<void>) | null = null;
   private lastSnapshot: FiberSnapshot | null = null;
   private lossSimulationPermitted = false;
   private readonly config: string;
@@ -144,16 +146,16 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     this.activeRelease = release;
     let before: string[];
     try { before = await databases(); }
-    catch (error) { this.activeRelease?.(); this.activeRelease = null; throw error; }
+    catch (error) { await this.activeRelease?.(); this.activeRelease = null; throw error; }
     const freshProfile = !this.databaseName && !this.nodeId;
     if (!this.databaseName && before.some(name => owned(this.prefix, name))) {
-      this.activeRelease?.(); this.activeRelease = null;
+      await this.activeRelease?.(); this.activeRelease = null;
       throw new Error("Existing IndexedDB namespace found for this profile. Fresh experimental profiles must not attach to unreviewed pre-existing state.");
     }
     // The new Fiber constructor itself can fail: release the lock in that case.
     let instance: Fiber;
     try { instance = new Fiber(); }
-    catch (error) { this.activeRelease?.(); this.activeRelease = null; throw error; }
+    catch (error) { await this.activeRelease?.(); this.activeRelease = null; throw error; }
     try {
       await instance.start(this.config, this.fiberKey, this.ckbKey, undefined, "error", this.prefix);
       this.fiber = instance;
@@ -183,7 +185,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
       }
       this.fiber = null;
       this.lossSimulationPermitted = false;
-      this.activeRelease?.(); this.activeRelease = null;
+      await this.activeRelease?.(); this.activeRelease = null;
       throw error;
     }
   }
@@ -222,7 +224,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     this.fiber = null;
     this.lastSnapshot = observed;
     if (!observed) this.lossSimulationPermitted = false;
-    this.activeRelease?.(); this.activeRelease = null;
+    await this.activeRelease?.(); this.activeRelease = null;
     // No pre-stop inspection means no backup or restore authorization.
     if (inspectFailure) throw new Error(`Fiber stopped, but final channel inspection failed; cold backup is BLOCKED: ${String(inspectFailure)}`);
     // Upstream stop() does NOT guarantee a flush barrier; funded restores remain disabled.
@@ -232,7 +234,12 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     if (this.fiber || this.activeRelease || this.coldLeaseRelease) throw new Error("Stop the node and finish active operations before cold recovery.");
     const release = await exclusiveProfile(this.prefix);
     this.coldLeaseRelease = release;
-    return () => { if (this.coldLeaseRelease === release) { this.coldLeaseRelease = null; release(); } };
+    return async () => {
+      if (this.coldLeaseRelease === release) {
+        try { await release(); }
+        finally { this.coldLeaseRelease = null; }
+      }
+    };
   }
   async assertOfflineAndExclusive(): Promise<void> {
     if (this.fiber || this.activeRelease || !this.coldLeaseRelease) throw new Error("Cold IndexedDB access requires an explicitly stopped node and exclusive recovery lease.");
@@ -277,7 +284,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   async withColdStore<T>(task: (store: IndexedDbColdStore) => Promise<T>): Promise<T> {
     const release = await this.acquireExclusiveRecoveryLease();
     try { return await task(new IndexedDbColdStore(this.databaseName, () => this.assertOfflineAndExclusive())); }
-    finally { release(); }
+    finally { await release(); }
   }
   /** The saved archive is checked again within the *same* exclusive lease as deletion.
    * This eliminates a time-of-check/time-of-use gap between verification and loss.
