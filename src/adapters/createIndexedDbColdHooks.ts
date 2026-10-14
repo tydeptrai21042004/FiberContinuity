@@ -102,7 +102,7 @@ export function createIndexedDbColdHooks(host: ColdFiberHost): {
       if (!source || typeof source !== "object" || !source.capabilities ||
         !Array.isArray(source.channels) ||
         !["full", "metadata", "unavailable"].includes(source.capabilities.channels)) {
-      return { status: "blocked", reason: "Invalid or incomplete source snapshot; recovery cannot be assessed." };
+      throw new Error("Invalid or incomplete source snapshot; recovery cannot be assessed.");
     }
     if (source.capabilities.channels === "unavailable" || source.channels.length !== 0) {
         throw new Error("This experimental cold adapter cannot restore a source with channels or uninspectable channel state.");
