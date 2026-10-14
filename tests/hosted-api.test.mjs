@@ -116,3 +116,12 @@ test('failure codes are strictly allowlisted before writing Vercel logs',()=>{
   assert.equal(injected.failureCode,null);
   assert.equal(JSON.stringify(injected).includes('TEST_SECRET'),false);
 });
+
+test('cold-store failure reasons are fixed allowlisted labels, never raw browser exception text',()=>{
+  const incomplete={...report,checks:{...report.checks,encryptedColdBackup:false},
+    storageFailureReason:'COLD_STORE_UNSTABLE'};
+  assert.equal(normalizeEvidence(incomplete).storageFailureReason,'COLD_STORE_UNSTABLE');
+  const injected=normalizeEvidence({...incomplete,storageFailureReason:'PRIVATE_KEY=secret'});
+  assert.equal(injected.storageFailureReason,null);
+  assert.equal(JSON.stringify(injected).includes('PRIVATE_KEY'),false);
+});

@@ -30,6 +30,11 @@ const diagnosticCategories = new Set([
   'FIBER_WASM_ASSET_OR_WORKER', 'FIBER_WASM_STARTUP', 'BROWSER_STORAGE',
   'RECOVERY_SAFETY_GATE', 'UNKNOWN_BROWSER_FAILURE'
 ]);
+const storageReasonCodes = new Set([
+  'COLD_STORE_UNSTABLE', 'COLD_STORE_MISSING', 'COLD_STORE_LOCKED',
+  'COLD_STORE_SCHEMA', 'COLD_STORE_UNSUPPORTED_VALUE', 'COLD_STORE_LIMIT',
+  'COLD_STORE_TRANSACTION', 'COLD_STORE_UNKNOWN'
+]);
 const diagnosticPhases = new Set([
   'browser-readiness', 'ckb-rpc-preflight', 'fiber-config-create',
   'fiber-wasm-start', 'fiber-observe', 'fiber-stop', 'encrypted-backup',
@@ -43,7 +48,7 @@ let report = {
   address: settings.watchedAddress, runId, mode: 'disposable-full-cycle',
   checks: Object.fromEntries(checkNames.map(name => [name, false])),
   failureStage: null, failureCode: null,
-  browserDiagnostic: null, browserPhase: null,
+  browserDiagnostic: null, browserPhase: null, storageFailureReason: null,
 };
 let failed = true;
 let stage = 'deployment';
@@ -103,8 +108,11 @@ try {
       ? result.failureCategory : 'UNKNOWN_BROWSER_FAILURE';
     report.browserPhase = diagnosticPhases.has(result.failurePhase)
       ? result.failurePhase : 'unknown';
+    report.storageFailureReason = report.browserPhase === 'cold-store-export' && storageReasonCodes.has(result.storageFailureReason)
+      ? result.storageFailureReason : null;
     // Never echo raw UI exceptions, keys or RPC URLs into GitHub artifacts.
-    console.error(`Hosted Fiber test incomplete at stage: ${report.failureStage}; phase: ${report.browserPhase}; category: ${report.browserDiagnostic}`);
+    console.error(`Hosted Fiber test incomplete at stage: ${report.failureStage}; phase: ${report.browserPhase}; category: ${report.browserDiagnostic}` +
+      (report.storageFailureReason ? `; storage reason: ${report.storageFailureReason}` : ''));
     // This is not a false PASS: the real WASM/whole-profile assertion stays required.
   } else {
     console.log('Hosted Fiber disposable zero-channel full-cycle: PASSED');

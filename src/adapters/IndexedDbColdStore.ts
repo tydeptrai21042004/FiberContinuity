@@ -321,19 +321,26 @@ export class IndexedDbColdStore {
     } finally { db.close(); }
   }
   /**
-   * Two full, separate stopped-database reads must match before encryption.
-   * This detects some residual writes, but is NOT a durable flush guarantee and
-   * does not replace stopping all writers or an upstream atomic checkpoint.
+   * Require two consecutive matching *complete* stopped-database snapshots.
+   * The WASM worker may finish residual writes shortly after stop(); bounded
+   * re-reading accommodates this without accepting mismatched snapshots.
+   * At most five reads are permitted, all under the caller's exclusive lease.
+   * This is NOT an upstream durable-flush guarantee, and funded profiles remain
+   * unsupported even if two snapshots happen to agree.
    */
   async exportStableBytes(): Promise<{ bytes: Uint8Array; dump: ColdDatabaseDump }> {
     const first = await this.exportBytes();
-    const initial = await this.validateBytes(first);
-    const second = await this.exportBytes();
-    const final = await this.validateBytes(second);
-    if (initial.checksum !== final.checksum) {
-      throw new ContinuityError("UNSTABLE_COLD_STORE", "The stopped IndexedDB contents changed across two complete reads. Do not archive or restore this profile.", true);
+    let previous = await this.validateBytes(first);
+    for (let read = 2; read <= 5; read++) {
+      // The first pair is immediate; only a mismatch triggers a short settle wait.
+      if (read > 2) await new Promise<void>(resolve => setTimeout(resolve, 200));
+      const bytes = await this.exportBytes();
+      const dump = await this.validateBytes(bytes);
+      if (previous.checksum === dump.checksum) return { bytes, dump };
+      previous = dump;
     }
-    return { bytes: second, dump: final };
+    throw new ContinuityError("UNSTABLE_COLD_STORE",
+      "Stopped IndexedDB data kept changing across five complete reads. Recovery is blocked; no archive was produced.", true);
   }
   async validateBytes(bytes: Uint8Array): Promise<ColdDatabaseDump> {
     if (!(bytes instanceof Uint8Array) || bytes.length < 40 || bytes.length > MAX_BYTES) throw new Error("Invalid cold database backup size.");

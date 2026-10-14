@@ -19,3 +19,27 @@ export function classifyHostedFailure(error: unknown): HostedFailureCategory {
   if (/fiber|node|start/i.test(message)) return "FIBER_WASM_STARTUP";
   return "UNKNOWN_BROWSER_FAILURE";
 }
+
+/** Redacted diagnostic for the cold export stage. Never serialize exception text,
+ * database names, profile IDs, keys, paths or RPC URLs to GitHub/Vercel.
+ */
+export const COLD_EXPORT_FAILURE_REASONS = [
+  "COLD_STORE_UNSTABLE", "COLD_STORE_MISSING", "COLD_STORE_LOCKED",
+  "COLD_STORE_SCHEMA", "COLD_STORE_UNSUPPORTED_VALUE", "COLD_STORE_LIMIT",
+  "COLD_STORE_TRANSACTION", "COLD_STORE_UNKNOWN"
+] as const;
+export type ColdExportFailureReason = typeof COLD_EXPORT_FAILURE_REASONS[number];
+export function classifyColdExportFailure(error: unknown): ColdExportFailureReason {
+  // This error code is created by the exporter, not derived from arbitrary text.
+  if (error && typeof error === "object" && "code" in error && error.code === "UNSTABLE_COLD_STORE") {
+    return "COLD_STORE_UNSTABLE";
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/no object stores|missing IndexedDB|missing.*database|cannot back up a missing|IndexedDB\.databases\(\)/i.test(message)) return "COLD_STORE_MISSING";
+  if (/locked|profile is in use|exclusive.*lease|blocked|holds this IndexedDB open/i.test(message)) return "COLD_STORE_LOCKED";
+  if (/key-generator|autoIncrement|object.store.*schema|schema mismatch|unsupported.*index|database.*version/i.test(message)) return "COLD_STORE_SCHEMA";
+  if (/unsupported.*(type|class|view|binary)|cyclic.*value|non-finite|nesting limit|unsupported IndexedDB|Invalid.*value/i.test(message)) return "COLD_STORE_UNSUPPORTED_VALUE";
+  if (/size limit|record limit|exceeds.*limit|too large|quota/i.test(message)) return "COLD_STORE_LIMIT";
+  if (/transaction|cursor|failed to open|cannot open|aborted|read.*failed/i.test(message)) return "COLD_STORE_TRANSACTION";
+  return "COLD_STORE_UNKNOWN";
+}

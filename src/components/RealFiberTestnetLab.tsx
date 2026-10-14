@@ -8,7 +8,7 @@ import { assertFiber091StorageContract } from "../adapters/Fiber091StorageContra
 import { verifyCkbTestnetRpc, inspectBrowserRecoveryReadiness, requestDurableBrowserStorage,
   type TestnetRpcCheck, type BrowserRecoveryReadiness } from "../core/testnetReadiness";
 import { buildEvidenceChain, redactEvidenceValue } from "../core/reviewEvidence";
-import { classifyHostedFailure, type HostedFailureCategory } from "../core/hostedFailureCategory";
+import { classifyHostedFailure, classifyColdExportFailure, type HostedFailureCategory, type ColdExportFailureReason } from "../core/hostedFailureCategory";
 import {
   beginColdRestore, readColdJournal, recordColdReadback, recordColdRestart,
   type ColdRecoveryJournal
@@ -26,6 +26,7 @@ type HostedSmokeReport = {
   address: string; runId: string; mode: "non-destructive-smoke" | "disposable-full-cycle";
   failurePhase?: string;
   failureCategory?: HostedFailureCategory;
+  storageFailureReason?: ColdExportFailureReason;
   checks: {
     browserReady: boolean; testnetVerified: boolean; actualWasmNodeStarted: boolean;
     zeroChannelsObserved: boolean; workersStopped: boolean;
@@ -229,6 +230,7 @@ export default function RealFiberTestnetLab() {
     } catch (error) {
       report.failurePhase = phase;
       report.failureCategory = classifyHostedFailure(error);
+      if (phase === "cold-store-export") report.storageFailureReason = classifyColdExportFailure(error);
       setLogStatus(`Browser smoke incomplete: ${errorMessage(error)}`);
     } finally {
       if (temporaryHost?.running) {
