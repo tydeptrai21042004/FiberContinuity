@@ -17,15 +17,13 @@ jobs:
       fail-fast: false
       matrix:
         node: ['22', '24']
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Typecheck, unit tests and production build
@@ -35,15 +33,13 @@ jobs:
     name: Hosted disposable Fiber testnet (Node 22)
     needs: unit-and-build
     # Avoid calling real testnet when local checks already fail.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Install Chromium
