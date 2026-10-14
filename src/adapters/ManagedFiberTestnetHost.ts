@@ -231,7 +231,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     // Upstream stop() does NOT guarantee a flush barrier; funded restores remain disabled.
   }
   /** Quiescent cold mode is never entered implicitly by preflight. */
-  async acquireExclusiveRecoveryLease(): Promise<() => void> {
+  async acquireExclusiveRecoveryLease(): Promise<() => Promise<void>> {
     if (this.fiber || this.activeRelease || this.coldLeaseRelease) throw new Error("Stop the node and finish active operations before cold recovery.");
     const release = await exclusiveProfile(this.prefix);
     this.coldLeaseRelease = release;
