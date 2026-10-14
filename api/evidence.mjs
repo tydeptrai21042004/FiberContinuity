@@ -36,7 +36,9 @@ export function normalizeEvidence(payload) {
     storageFailureReason: typeof payload.storageFailureReason === 'string' && [
       'COLD_STORE_UNSTABLE','COLD_STORE_MISSING','COLD_STORE_LOCKED',
       'COLD_STORE_SCHEMA','COLD_STORE_UNSUPPORTED_VALUE','COLD_STORE_LIMIT',
-      'COLD_STORE_TRANSACTION','COLD_STORE_UNKNOWN'
+      'COLD_STORE_TRANSACTION','COLD_STORE_PRECONDITION','COLD_STORE_DISCOVERY',
+      'COLD_STORE_OPEN','COLD_STORE_CURSOR','COLD_STORE_SERIALIZATION',
+      'COLD_STORE_CHECKSUM','COLD_STORE_VALIDATION','COLD_STORE_UNKNOWN'
     ].includes(payload.storageFailureReason) ? payload.storageFailureReason : null,
     isolatedZeroChannelRestoreReported:payload.mode === 'disposable-full-cycle' && status === 'passed',
     fundedChannelRestoreVerified:false, externallyAttested:false};

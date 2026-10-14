@@ -156,8 +156,19 @@ function iterate(store: IDBObjectStore, entry: StoreSchema, counter: { value: nu
       try {
         const cursor = request.result;
         if (!cursor) { resolve(); return; }
-        if (++counter.value > MAX_RECORDS) throw new Error("IndexedDB backup exceeds record limit.");
-        entry.entries.push({ key: encode(cursor.primaryKey), value: encode(cursor.value) });
+        if (++counter.value > MAX_RECORDS) {
+          throw new ContinuityError("COLD_STORE_LIMIT", "IndexedDB cold backup exceeds the supported record limit.", true);
+        }
+        let key: Encoded, value: Encoded;
+        try {
+          key = encode(cursor.primaryKey);
+          value = encode(cursor.value);
+        } catch {
+          // Never expose stored values, exception text or private key material.
+          throw new ContinuityError("COLD_STORE_UNSUPPORTED_VALUE",
+            "IndexedDB contains a value outside the safely supported clone types.", true);
+        }
+        entry.entries.push({ key, value });
         cursor.continue();
       } catch (error) { try { store.transaction.abort(); } catch { /* already stopped */ } reject(error); }
     };
@@ -298,27 +309,71 @@ export class IndexedDbColdStore {
     } finally { db.close(); }
   }
   async exportBytes(): Promise<Uint8Array> {
-    await this.assertOffline();
-    if (!await this.existing()) throw new Error("Cannot back up a missing IndexedDB database.");
-    const db = await connect(this.databaseName);
+    // Each operation has a fixed, secret-free failure code. A previous generic
+    // COLD_STORE_UNKNOWN obscured failures in discovery, transaction reads and
+    // validation that require very different fixes. Never log raw IDB exceptions.
+    let step: "precondition" | "discovery" | "open" | "schema" |
+      "cursor" | "serialization" | "checksum" = "precondition";
+    let db: IDBDatabase | null = null;
     try {
+      await this.assertOffline();
+      step = "discovery";
+      if (!await this.existing()) {
+        throw new ContinuityError("COLD_STORE_MISSING", "The stopped Fiber database is missing; no archive was produced.", true);
+      }
+      step = "open";
+      db = await connect(this.databaseName);
       const names = strings(db.objectStoreNames);
-      if (!names.length) throw new Error("Database has no object stores.");
+      if (!names.length) {
+        throw new ContinuityError("COLD_STORE_MISSING", "The stopped Fiber database has no object stores.", true);
+      }
+      step = "schema";
       const tx = db.transaction(names, "readonly");
+      // Register the transaction completion handler before requesting any cursor.
+      // Observe it concurrently with the cursors to prevent dangling rejections
+      // if either the transaction aborts or a record cannot be encoded.
       const finished = waitTransaction(tx);
-      const stores = names.map((name) => schema(tx.objectStore(name)));
+      let stores: StoreSchema[];
+      try {
+        stores = names.map((name) => schema(tx.objectStore(name)));
+      } catch (error) {
+        try { tx.abort(); } catch { /* transaction already finished */ }
+        await Promise.allSettled([finished]);
+        throw error;
+      }
+      step = "cursor";
       const count = { value: 0 };
       const work = Promise.all(stores.map((entry) => iterate(tx.objectStore(entry.name), entry, count)));
-      await work;
-      await finished;
+      await Promise.all([work, finished]);
+      step = "serialization";
       const core: CoreDump = { format: FORMAT, version: 1, database: this.databaseName, databaseVersion: db.version, stores };
       const json = JSON.stringify(core);
-      if (new TextEncoder().encode(json).byteLength > MAX_BYTES) throw new Error("Cold database export exceeds safe size limit.");
+      if (new TextEncoder().encode(json).byteLength > MAX_BYTES) {
+        throw new ContinuityError("COLD_STORE_LIMIT", "Cold database export exceeds the supported safe size limit.", true);
+      }
+      step = "checksum";
       const dump: ColdDatabaseDump = { ...core, checksum: await sha256(json) };
       const output = new TextEncoder().encode(JSON.stringify(dump));
-      if (output.byteLength > MAX_BYTES) throw new Error("Cold database export exceeds safe size limit.");
+      if (output.byteLength > MAX_BYTES) {
+        throw new ContinuityError("COLD_STORE_LIMIT", "Cold database export exceeds the supported safe size limit.", true);
+      }
       return output;
-    } finally { db.close(); }
+    } catch (error) {
+      if (error instanceof ContinuityError) throw error;
+      const reason = {
+        precondition: "COLD_STORE_PRECONDITION",
+        discovery: "COLD_STORE_DISCOVERY",
+        open: "COLD_STORE_OPEN",
+        schema: "COLD_STORE_SCHEMA",
+        cursor: "COLD_STORE_CURSOR",
+        serialization: "COLD_STORE_SERIALIZATION",
+        checksum: "COLD_STORE_CHECKSUM"
+      } as const;
+      throw new ContinuityError(reason[step],
+        `Cold database export failed during ${step}; the backup was not produced.`, true);
+    } finally {
+      db?.close();
+    }
   }
   /**
    * Require two consecutive matching *complete* stopped-database snapshots.
@@ -330,12 +385,18 @@ export class IndexedDbColdStore {
    */
   async exportStableBytes(): Promise<{ bytes: Uint8Array; dump: ColdDatabaseDump }> {
     const first = await this.exportBytes();
-    let previous = await this.validateBytes(first);
+    let previous: ColdDatabaseDump;
+    try { previous = await this.validateBytes(first); }
+    catch { throw new ContinuityError("COLD_STORE_VALIDATION",
+      "Stopped database snapshot failed integrity or schema validation; backup blocked.", true); }
     for (let read = 2; read <= 5; read++) {
       // The first pair is immediate; only a mismatch triggers a short settle wait.
       if (read > 2) await new Promise<void>(resolve => setTimeout(resolve, 200));
       const bytes = await this.exportBytes();
-      const dump = await this.validateBytes(bytes);
+      let dump: ColdDatabaseDump;
+      try { dump = await this.validateBytes(bytes); }
+      catch { throw new ContinuityError("COLD_STORE_VALIDATION",
+        "Stopped database snapshot failed integrity or schema validation; backup blocked.", true); }
       if (previous.checksum === dump.checksum) return { bytes, dump };
       previous = dump;
     }

@@ -121,6 +121,9 @@ test('cold-store failure reasons are fixed allowlisted labels, never raw browser
   const incomplete={...report,checks:{...report.checks,encryptedColdBackup:false},
     storageFailureReason:'COLD_STORE_UNSTABLE'};
   assert.equal(normalizeEvidence(incomplete).storageFailureReason,'COLD_STORE_UNSTABLE');
+  for (const code of ['COLD_STORE_CURSOR','COLD_STORE_OPEN','COLD_STORE_VALIDATION']) {
+    assert.equal(normalizeEvidence({...incomplete,storageFailureReason:code}).storageFailureReason,code);
+  }
   const injected=normalizeEvidence({...incomplete,storageFailureReason:'PRIVATE_KEY=secret'});
   assert.equal(injected.storageFailureReason,null);
   assert.equal(JSON.stringify(injected).includes('PRIVATE_KEY'),false);

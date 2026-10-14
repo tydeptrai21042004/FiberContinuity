@@ -1,3 +1,4 @@
+import { ContinuityError } from "./errors";
 /** Short, fixed browser-failure labels. Never export raw upstream exceptions:
  * they can contain RPC endpoints, profile identifiers or application state.
  */
@@ -26,13 +27,19 @@ export function classifyHostedFailure(error: unknown): HostedFailureCategory {
 export const COLD_EXPORT_FAILURE_REASONS = [
   "COLD_STORE_UNSTABLE", "COLD_STORE_MISSING", "COLD_STORE_LOCKED",
   "COLD_STORE_SCHEMA", "COLD_STORE_UNSUPPORTED_VALUE", "COLD_STORE_LIMIT",
-  "COLD_STORE_TRANSACTION", "COLD_STORE_UNKNOWN"
+  "COLD_STORE_TRANSACTION", "COLD_STORE_PRECONDITION", "COLD_STORE_DISCOVERY",
+  "COLD_STORE_OPEN", "COLD_STORE_CURSOR", "COLD_STORE_SERIALIZATION",
+  "COLD_STORE_CHECKSUM", "COLD_STORE_VALIDATION", "COLD_STORE_UNKNOWN"
 ] as const;
 export type ColdExportFailureReason = typeof COLD_EXPORT_FAILURE_REASONS[number];
 export function classifyColdExportFailure(error: unknown): ColdExportFailureReason {
-  // This error code is created by the exporter, not derived from arbitrary text.
-  if (error && typeof error === "object" && "code" in error && error.code === "UNSTABLE_COLD_STORE") {
-    return "COLD_STORE_UNSTABLE";
+  // Only codes from our ContinuityError class are trusted. A malicious external
+  // exception with a spoofed `code` property cannot set the evidence category.
+  if (error instanceof ContinuityError) {
+    if (error.code === "UNSTABLE_COLD_STORE") return "COLD_STORE_UNSTABLE";
+    if (COLD_EXPORT_FAILURE_REASONS.includes(error.code as ColdExportFailureReason)) {
+      return error.code as ColdExportFailureReason;
+    }
   }
   const message = error instanceof Error ? error.message : String(error);
   if (/no object stores|missing IndexedDB|missing.*database|cannot back up a missing|IndexedDB\.databases\(\)/i.test(message)) return "COLD_STORE_MISSING";
