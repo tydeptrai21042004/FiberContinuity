@@ -44,7 +44,9 @@ export async function createEphemeralFiberJsBrowserNode(options: BrowserNodeOpti
   );
 
   // Do not advertise a browser-local listener and never inherit TCP bootnodes from defaults.
-  config.setIn(["fiber", "announce_listening_addr"], false);
+  // Under the failsafe schema, Boolean JS values cannot be stringified;
+  // the plain string scalar serializes as YAML false for the Fiber parser.
+  config.setIn(["fiber", "announce_listening_addr"], "false");
   config.setIn(["fiber", "bootnode_addrs"], options.bootnodes);
 
   await fiber.start(

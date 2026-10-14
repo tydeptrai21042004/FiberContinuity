@@ -19,6 +19,8 @@ export function browserFiberTestnetConfig(upstreamConfig: string): string {
   // address solely to satisfy config shape. No listening socket is exposed.
   yaml.setIn(["fiber", "listening_addr"], "/ip4/127.0.0.1/tcp/8228");
   yaml.setIn(["fiber", "bootnode_addrs"], []);
-  yaml.setIn(["fiber", "announce_listening_addr"], false);
+  // The failsafe YAML schema has no Boolean tag. Store the plain scalar
+  // "false" so serialization retains native YAML false without coercing hex data.
+  yaml.setIn(["fiber", "announce_listening_addr"], "false");
   return yaml.toString({ lineWidth: 0 });
 }
