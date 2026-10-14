@@ -37,9 +37,9 @@ function syntheticLive(fail = false): { adapter: FiberAdapter; backing: DemoFibe
 }
 
 describe("cold whole-node recovery safety", () => {
-  it("refuses an invalid or implicit storage profile name", () => {
-    expect(() => new IndexedDbColdStore("", async () => {})).toThrow(/stable, explicit/);
-    expect(() => new IndexedDbColdStore("unsafe profile", async () => {})).toThrow(/stable, explicit/);
+  it("refuses missing or control-character storage profile names", () => {
+    expect(() => new IndexedDbColdStore("", async () => {})).toThrow(/database name/i);
+    expect(() => new IndexedDbColdStore("unsafe\nprofile", async () => {})).toThrow(/database name/i);
   });
 
   it("rejects mainnet cold recovery even with a declared host", () => {
