@@ -14,6 +14,7 @@ import { IndexedDbColdStore } from "./IndexedDbColdStore";
 import { assertFiber091StorageContract } from "./Fiber091StorageContract";
 import { createIndexedDbColdHooks, type ColdFiberHost } from "./createIndexedDbColdHooks";
 import { assertStartAllowed } from "../core/coldRecoveryJournal";
+import { assertSafeRpcUrl, verifyCkbTestnetRpc, type TestnetRpcCheck } from "../core/testnetReadiness";
 
 export const PINNED_FIBER_VERSION = "0.9.1";
 const PREFIX_RE = /^fc-testnet-[a-z0-9-]{8,90}$/;
@@ -68,6 +69,7 @@ export interface RealNodeEvidence {
   peerCount: number | null;
   storageReadback: "not-run" | "matched";
   workerFlushGuarantee: "not-provided-by-upstream";
+  rpcChainVerified: "ckb_testnet" | "not-checked";
   channelSafety: "not-established";
 }
 
@@ -84,6 +86,8 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   private lastSnapshot: FiberSnapshot | null = null;
   private lossSimulationPermitted = false;
   private readonly config: string;
+  private readonly ckbRpcUrl: string;
+  lastRpcCheck: TestnetRpcCheck | null = null;
   private readonly fiberKey: Uint8Array;
   private readonly ckbKey: Uint8Array;
   private readonly rpc: FiberLike = { invokeCommand: async (method, params) => {
@@ -93,6 +97,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   private adapter: FiberJsAdapter;
   private constructor(options: ManagedProfileOptions, config: string, identity: string) {
     this.prefix = options.prefix;
+    this.ckbRpcUrl = assertSafeRpcUrl(options.ckbRpcUrl).toString();
     this.config = config;
     this.networkIdentity = identity;
     this.fiberKey = secret(options.fiberKeyHex, "Fiber node identity key");
@@ -105,7 +110,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
   static async create(options: ManagedProfileOptions): Promise<ManagedFiberTestnetHost> {
     requireBrowser();
     if (!PREFIX_RE.test(options.prefix)) throw new Error("Use a unique profile identifier beginning fc-testnet- (8-90 safe suffix characters).");
-    if (!/^https:\/\//.test(options.ckbRpcUrl)) throw new Error("Provide a HTTPS CKB testnet RPC URL.");
+    assertSafeRpcUrl(options.ckbRpcUrl);
     secret(options.ckbKeyHex, "CKB secret");
     secret(options.fiberKeyHex, "Fiber node identity key");
     // A Fiber object must only be created on a cross-origin-isolated page.
@@ -134,6 +139,10 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     assertStartAllowed(this.prefix, recoveryRestart);
     if (this.fiber) throw new Error("Node already running.");
     if (this.coldLeaseRelease) throw new Error("Cold recovery lease is active.");
+    // All potentially failing network/module setup happens BEFORE acquiring the
+    // profile Web Lock. Otherwise a CORS/DNS error can orphan an exclusive lease.
+    this.lastRpcCheck = await verifyCkbTestnetRpc(this.ckbRpcUrl);
+    const { Fiber } = await import("@nervosnetwork/fiber-js");
     const release = await exclusiveProfile(this.prefix);
     this.activeRelease = release;
     let before: string[];
@@ -144,8 +153,10 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
       this.activeRelease?.(); this.activeRelease = null;
       throw new Error("Existing IndexedDB namespace found for this profile. Fresh experimental profiles must not attach to unreviewed pre-existing state.");
     }
-    const { Fiber } = await import("@nervosnetwork/fiber-js");
-    const instance = new Fiber();
+    // The new Fiber constructor itself can fail: release the lock in that case.
+    let instance: Fiber;
+    try { instance = new Fiber(); }
+    catch (error) { this.activeRelease?.(); this.activeRelease = null; throw error; }
     try {
       await instance.start(this.config, this.fiberKey, this.ckbKey, undefined, "error", this.prefix);
       this.fiber = instance;
@@ -271,15 +282,27 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     try { return await task(new IndexedDbColdStore(this.databaseName, () => this.assertOfflineAndExclusive())); }
     finally { release(); }
   }
-  async simulateLossForZeroChannelProfile(): Promise<void> {
+  /** The saved archive is checked again within the *same* exclusive lease as deletion.
+   * This eliminates a time-of-check/time-of-use gap between verification and loss.
+   */
+  async simulateLossForZeroChannelProfile(authenticatedBackup: Uint8Array): Promise<void> {
     if (!this.canSimulateLoss) throw new Error("Deliberate loss is only allowed for a newly created, observed and stopped lab-owned profile, never an adopted/recovered profile.");
     assertStartAllowed(this.prefix);
     await this.withColdStore(async store => {
       const state = await store.presence();
-      if (state === "absent") throw new Error("No profile database exists.");
+      if (state !== "occupied") throw new Error("Simulated loss requires an existing, verified, populated test profile.");
       const last = this.lastSnapshot;
       if (!last) throw new Error("Missing pre-loss state.");
       this.ensureNoChannels(last);
+      const source = await store.validateBytes(authenticatedBackup);
+      assertFiber091StorageContract(source);
+      // Both stopped-database reads and the delete happen while all cooperating
+      // tabs are fenced by the SAME Web Lock. A stale saved copy is rejected.
+      const current = await store.exportStableBytes();
+      assertFiber091StorageContract(current.dump);
+      if (source.checksum !== current.dump.checksum) {
+        throw new Error("Saved archive differs from the current complete IndexedDB state. Destructive simulation BLOCKED.");
+      }
       await new Promise<void>((resolve, reject) => {
         const req = indexedDB.deleteDatabase(this.databaseName);
         req.onblocked = () => reject(new Error("Open IndexedDB connection blocks test-profile deletion."));
@@ -321,6 +344,7 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     return { kind: "fiber-js-0.9.1-testnet-observation", at: new Date().toISOString(), prefix: this.prefix,
       databaseName: this.databaseName || null, networkIdentity: this.networkIdentity,
       nodeId: this.nodeId || null, channelCount: this.lastSnapshot?.channels.length ?? null,
-      peerCount, storageReadback, workerFlushGuarantee: "not-provided-by-upstream", channelSafety: "not-established" };
+      peerCount, storageReadback, workerFlushGuarantee: "not-provided-by-upstream", channelSafety: "not-established",
+      rpcChainVerified: this.lastRpcCheck?.chain ?? "not-checked" };
   }
 }

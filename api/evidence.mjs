@@ -23,7 +23,17 @@ export function normalizeEvidence(payload) {
   // Deliberately discard all other fields. NEVER log unreviewed browser payloads.
   return {schema:'fiber-continuity-hosted-evidence-v1', loggedAt:new Date().toISOString(), runId:payload.runId,
     source:payload.source, address:settings.watchedAddress, scope:payload.mode === 'disposable-full-cycle' ? 'isolated-disposable-zero-channel-full-cycle' : 'non-destructive-zero-channel-browser-smoke',
-    status, checks, isolatedZeroChannelRestoreReported:payload.mode === 'disposable-full-cycle' && status === 'passed',
+    status, checks, failureStage: typeof payload.failureStage === 'string' && [
+      'deployment','browser-navigation','browser-test','evidence-ingest',
+      'browserReady','testnetVerified','actualWasmNodeStarted','zeroChannelsObserved','workersStopped',
+      'encryptedColdBackup','archiveRoundtrip','stoppedDatabaseReadback','disposableProfileDeleted',
+      'wholeProfileRestored','zeroChannelRestartVerified'
+    ].includes(payload.failureStage) ? payload.failureStage : null,
+    failureCode: typeof payload.failureCode === 'string' && [
+      'DEPLOYMENT_OUTDATED','NAVIGATION_FAILED','BROWSER_TEST_TIMEOUT',
+      'BROWSER_TEST_INCOMPLETE','BROWSER_TEST_ERROR','EVIDENCE_INGEST_FAILED'
+    ].includes(payload.failureCode) ? payload.failureCode : null,
+    isolatedZeroChannelRestoreReported:payload.mode === 'disposable-full-cycle' && status === 'passed',
     fundedChannelRestoreVerified:false, externallyAttested:false};
 }
 function authorized(header, secret) {

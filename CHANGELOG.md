@@ -75,3 +75,10 @@ See [RELEASE_NOTES_V10.md](RELEASE_NOTES_V10.md). Adds public-address watch-only
 ## 0.2.2 — Node 24 / Vercel runtime alignment
 
 - Moved Vercel/CI/local runtime pins to Node.js 24.
+
+## v1.0.1 — cumulative deployment repair
+- Ship the missing v0.9 readiness/evidence helpers and host changes in a cumulative patch suitable for partial-upgrade repositories.
+- Hosted Chromium preflights the deployed application version and controls, distinguishing stale deployment from a genuine Fiber test failure.
+- Browser runner records bounded failure-stage codes; Vercel evidence ingestion only logs allowlisted values.
+- Missing optional Vercel evidence token no longer turns successful browser evidence into a failed run; GitHub evidence artifact is always saved.
+- Hosted workflow checks tests/build before visiting the deployed application when the updated workflow can be committed.

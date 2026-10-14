@@ -33,6 +33,16 @@ describe("validate complete IDB data BEFORE destructive recovery", () => {
     const source = core(); source.stores[0].entries[0].key = { t: "object", v: [["not", "a primary key"]] };
     await expect(cold.validateBytes(await bytes(source))).rejects.toThrow(/primary key.*unsupported/i);
   });
+  it("rejects a forged inline primary key before creating an IndexedDB target", async () => {
+    const source = core();
+    source.stores[0].keyPath = "key";
+    source.stores[0].entries[0].key = "forged";
+    await expect(cold.validateBytes(await bytes(source))).rejects.toThrow(/Inline IndexedDB key does not match/);
+  });
+  it("accepts correctly matched inline primary keys", async () => {
+    const source = core(); source.stores[0].keyPath = "key";
+    expect((await cold.validateBytes(await bytes(source))).stores[0].entries).toHaveLength(1);
+  });
   it("rejects two indexes with the same name", async () => {
     const source = core(); source.stores[0].indexes.push({ ...source.stores[0].indexes[0] });
     await expect(cold.validateBytes(await bytes(source))).rejects.toThrow(/duplicate index schema/i);

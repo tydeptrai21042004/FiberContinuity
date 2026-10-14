@@ -215,6 +215,22 @@ function primaryKeySignature(encoded: Encoded, depth = 0): string {
   }
 }
 
+function keyAtPath(value: unknown, path: string | string[]): unknown {
+  const lookup = (key: string): unknown => {
+    if (key === "") return value;
+    const segments = key.split(".");
+    let current = value;
+    for (const segment of segments) {
+      if (!segment || current === null || typeof current !== "object" || !(segment in current)) {
+        throw new Error("Cold backup inline IndexedDB key path is missing.");
+      }
+      current = (current as Record<string, unknown>)[segment];
+    }
+    return current;
+  };
+  return Array.isArray(path) ? path.map(lookup) : lookup(path);
+}
+
 function validateCore(dump: CoreDump, expectedName: string): void {
   if (dump.format !== FORMAT || dump.version !== 1 || dump.database !== expectedName ||
       !Number.isSafeInteger(dump.databaseVersion) || dump.databaseVersion < 1 || !Array.isArray(dump.stores) || dump.stores.length < 1 || dump.stores.length > 100) {
@@ -242,7 +258,16 @@ function validateCore(dump: CoreDump, expectedName: string): void {
       const signature = primaryKeySignature(entry.key);
       if (keys.has(signature)) throw new Error("Duplicate primary key in cold backup. Restore refused before any write.");
       keys.add(signature);
-      decode(entry.key); decode(entry.value);
+      const restoredKey = decode(entry.key);
+      const restoredValue = decode(entry.value);
+      if (store.keyPath !== null) {
+        // For inline-key stores put(value) derives the primary key from value.
+        // Check it NOW, before any database creation/write, not just afterward.
+        const derived = keyAtPath(restoredValue, store.keyPath);
+        if (primaryKeySignature(encode(derived)) !== signature) {
+          throw new Error("Inline IndexedDB key does not match the archived primary key; restore refused before mutation.");
+        }
+      }
     }
   }
 }

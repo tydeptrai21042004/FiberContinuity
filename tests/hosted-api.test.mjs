@@ -104,3 +104,15 @@ test('complete disposable zero-channel recovery evidence is distinct from funded
   const incomplete=normalizeEvidence({...payload,checks:{...payload.checks,zeroChannelRestartVerified:false}});
   assert.equal(incomplete.status,'incomplete');
 });
+
+test('failure codes are strictly allowlisted before writing Vercel logs',()=>{
+  const incomplete=normalizeEvidence({...report,checks:{...report.checks,actualWasmNodeStarted:false},
+    failureStage:'actualWasmNodeStarted',failureCode:'BROWSER_TEST_INCOMPLETE'});
+  assert.equal(incomplete.status,'incomplete');
+  assert.equal(incomplete.failureStage,'actualWasmNodeStarted');
+  assert.equal(incomplete.failureCode,'BROWSER_TEST_INCOMPLETE');
+  const injected=normalizeEvidence({...report, failureStage:'DO_NOT_LOG_SECRET', failureCode:'password=TEST_SECRET'});
+  assert.equal(injected.failureStage,null);
+  assert.equal(injected.failureCode,null);
+  assert.equal(JSON.stringify(injected).includes('TEST_SECRET'),false);
+});
