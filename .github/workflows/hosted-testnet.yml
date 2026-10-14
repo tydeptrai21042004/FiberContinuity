@@ -1,12 +1,40 @@
-name: Hosted Fiber testnet evidence
+name: FiberContinuity cloud verification
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   schedule:
-    - cron: "25 4 * * 1" # weekly, UTC; hosted browser is expensive
+    - cron: '25 4 * * 1'
 permissions:
   contents: read
+concurrency:
+  group: fiber-evidence-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  real-browser-smoke:
+  unit-and-build:
+    name: unit-and-build (Node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck, unit tests and production build
+        run: npm run check && npm run build && npm run test:hosted-api
+
+  real-browser-testnet:
+    name: Hosted disposable Fiber testnet (Node 22)
+    needs: unit-and-build
+    # Avoid calling real testnet when local checks already fail.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -14,20 +42,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install project dependencies
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Install hosted Chromium
+      - name: Install Chromium
         run: npx playwright install chromium --with-deps
-      - name: Run disposable zero-channel live Fiber test against Vercel
+      - name: Run actual zero-channel test; never treat missing WASM startup as PASS
         env:
           FIBER_CONTINUITY_URL: ${{ vars.FIBER_CONTINUITY_URL || 'https://fiber-continuity.vercel.app' }}
           EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}
         run: npm run test:hosted-browser
-      - name: Save redacted evidence even when smoke fails
+      - name: Preserve redacted evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fiber-hosted-testnet-evidence
+          name: fiber-testnet-evidence-${{ github.run_id }}
           path: evidence/hosted-browser-evidence.json
           if-no-files-found: warn
           retention-days: 30
