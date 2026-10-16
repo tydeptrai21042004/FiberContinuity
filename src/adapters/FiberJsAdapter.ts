@@ -56,8 +56,13 @@ function parseChannelList(value: unknown): unknown[] {
   const response = Array.isArray(value) ? value : obj(value).channels;
   if (!Array.isArray(response)) throw new Error("Fiber inspection failed: list_channels response shape is invalid; channel coverage cannot be established.");
   const wrapper = obj(value);
-  if (wrapper.error || wrapper.has_more === true || wrapper.hasMore === true ||
-      wrapper.next_cursor || wrapper.nextCursor || wrapper.next_page || wrapper.nextPage) {
+  // Treat non-boolean pagination flags as ambiguous, not as a zero-channel response.
+  if (wrapper.error || (wrapper.has_more !== undefined && wrapper.has_more !== false) ||
+      (wrapper.hasMore !== undefined && wrapper.hasMore !== false) ||
+      (wrapper.next_cursor !== undefined && wrapper.next_cursor !== null && wrapper.next_cursor !== "") ||
+      (wrapper.nextCursor !== undefined && wrapper.nextCursor !== null && wrapper.nextCursor !== "") ||
+      (wrapper.next_page !== undefined && wrapper.next_page !== null && wrapper.next_page !== "") ||
+      (wrapper.nextPage !== undefined && wrapper.nextPage !== null && wrapper.nextPage !== "")) {
     throw new Error("Fiber inspection failed: list_channels is incomplete, paginated or contains an RPC error.");
   }
   const total = wrapper.total_count ?? wrapper.totalCount;

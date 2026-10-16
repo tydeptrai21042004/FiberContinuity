@@ -112,14 +112,19 @@ try {
   const value = await page.getByTestId('hosted-smoke-result').innerText();
   const result = JSON.parse(value);
   if (result.schema !== report.schema || result.address !== report.address || result.mode !== report.mode ||
-      !result.checks || typeof result.checks !== 'object') {
+      result.source !== 'interactive-browser' || typeof result.runId !== 'string' || !result.runId ||
+      !result.checks || typeof result.checks !== 'object' || Array.isArray(result.checks) ||
+      result.checks.fundedChannelRecoveryVerified !== false) {
     throw Error('BROWSER_TEST_ERROR');
   }
   report = {
     ...report,
     checks: Object.fromEntries(checkNames.map(name => [name, result.checks[name] === true])),
   };
-  failed = requiredChecks.some(name => !report.checks[name]);
+  // All positive milestones must be explicit booleans. The v0.9.1 test must
+  // never imply that funded-channel recovery or upstream flush was established.
+  failed = requiredChecks.some(name => result.checks[name] !== true);
+  if (result.failurePhase || result.failureCategory) failed = true;
   if (failed) {
     markFailure(requiredChecks.find(name => !report.checks[name]), 'BROWSER_TEST_INCOMPLETE');
     // Read the operator-facing status, but publish only an allowlisted category.

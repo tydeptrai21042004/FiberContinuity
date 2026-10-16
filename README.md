@@ -244,3 +244,14 @@ barrier, and the app must not be used for funded-channel recovery.
 For the reviewer-facing progress statement, actual hosted test acceptance criteria,
 and the response to the upstream guidance, see
 [`REVIEWER_UPDATE_ISSUE_41.md`](REVIEWER_UPDATE_ISSUE_41.md).
+
+
+## CKBuilder #41: scope of real Testnet cold recovery
+
+The practical use case is a self-custodial browser application that must restore its **entire Fiber JS node IndexedDB database** after the local browser profile is lost. This is **not** a feature for restoring one channel or rolling back an active payment channel.
+
+The maintainer recommended stopping the Fiber node and all database writers before exporting the complete IndexedDB contents, and restoring those contents into an offline, otherwise empty target before starting Fiber again. FiberContinuity currently implements this only as a **controlled, newly created, zero-channel Testnet experiment**. A record-by-record, two-pass export is not proof of complete write flush. In `@nervosnetwork/fiber-js@0.9.1`, `await fiber.stop()` does **not** guarantee completed IndexedDB worker writes; upstream PR [#1699](https://github.com/nervosnetwork/fiber/pull/1699) addresses the underlying problem. Do not describe this experimental build as safely restoring funded nodes.
+
+**Operator walkthrough:** start a new dedicated zero-channel Testnet node; inspect it; stop it explicitly; export and download the password-encrypted complete database archive; retain the original two Testnet keys and profile identifier outside browser storage; import the saved archive; recover into an absent/empty target while the node is stopped; verify full record readback; restart explicitly and inspect the original node identity and zero-channel state. Browser refresh can use *Prepare offline recovery*; it does not start an empty node to discover its database.
+
+A successful CI evidence JSON proves only the stated disposable zero-channel test stages. It **does not prove** upstream flush, channel-peer reconciliation, payment/invoice completeness or production-funds safety. Browser Web Locks fence cooperating same-origin tabs; they cannot assert control of uncooperative external processes. Runtime upgrades and migration of existing databases remain blocked unless deliberately supported and acceptance-tested. See [`docs/REVIEWER_41_ACCEPTANCE.md`](docs/REVIEWER_41_ACCEPTANCE.md).

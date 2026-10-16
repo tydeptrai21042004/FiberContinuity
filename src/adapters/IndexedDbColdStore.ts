@@ -195,7 +195,11 @@ export function assertColdDatabaseName(name: unknown): asserts name is string {
 function connect(name: string, version?: number, upgrade?: (db: IDBDatabase, tx: IDBTransaction) => void): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = version === undefined ? indexedDB.open(name) : indexedDB.open(name, version);
-    request.onblocked = () => reject(new ContinuityError("DATABASE_BLOCKED", "Another browser connection holds this IndexedDB open. Close all other tabs/processes.", true));
+    // An IndexedDB open/upgrade request cannot be cancelled after `blocked`.
+    // Rejecting immediately would release the caller's exclusive lease while
+    // the pending request might later upgrade/create a database behind its back.
+    // Keep the lease until the request actually settles (close blocking tabs).
+    request.onblocked = () => { /* wait for onsuccess/onerror; never orphan a pending open */ };
     request.onerror = () => reject(request.error ?? new Error("Cannot open IndexedDB."));
     request.onupgradeneeded = () => {
       if (!upgrade || !request.transaction) {

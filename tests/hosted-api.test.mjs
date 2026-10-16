@@ -128,3 +128,11 @@ test('cold-store failure reasons are fixed allowlisted labels, never raw browser
   assert.equal(injected.storageFailureReason,null);
   assert.equal(JSON.stringify(injected).includes('PRIVATE_KEY'),false);
 });
+
+test('a report with contradictory failure fields is never accepted as passed', () => {
+  for (const field of ['failureStage', 'failureCode', 'failurePhase', 'failureCategory']) {
+    const marked = normalizeEvidence({...report, [field]:'browser-test'});
+    assert.equal(marked.status, 'incomplete');
+    assert.equal(marked.idbShutdownFlushVerified, false);
+  }
+});

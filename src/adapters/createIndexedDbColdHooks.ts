@@ -15,11 +15,13 @@ export interface ColdFiberHost {
   fiberVersion: string;
   network: "testnet"; // deliberately testnet-only for this experimental adapter
   networkIdentity: string;
-  /** Fences all participating tabs, workers, and database writers, not only this UI. */
+  /** Fences cooperating same-origin browser tabs. The host must separately
+   * prove worker shutdown; Web Locks cannot control arbitrary external writers. */
   acquireExclusiveRecoveryLease(): Promise<() => void | Promise<void>>;
   /** Stop new writes and inspect a stable node state, BEFORE stopping the node. */
   quiesceAndInspect(): Promise<FiberSnapshot>;
-  /** Stop Fiber and all writers; await definitive worker/db closure. */
+  /** Stop Fiber and all writers. Do not claim a definitive write-flush
+   * acknowledgement on Fiber JS v0.9.1. */
   stopAndFence(): Promise<void>;
   /** Fail unless ALL writer processes and connections are conclusively stopped. */
   assertOfflineAndExclusive(): Promise<void>;

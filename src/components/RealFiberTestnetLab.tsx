@@ -119,7 +119,8 @@ export default function RealFiberTestnetLab() {
         decoded.snapshot.fiberVersion !== PINNED_FIBER_VERSION) {
       throw new Error("Archive does not match the pinned runtime, entire configuration and persisted node identity.");
     }
-    if (decoded.snapshot.channels.length !== 0 || decoded.snapshot.capabilities.channels === "unavailable") {
+    if (!Array.isArray(decoded.snapshot.channels) || decoded.snapshot.channels.length !== 0 ||
+        decoded.snapshot.capabilities.channels === "unavailable") {
       throw new Error("Funded or uninspectable channels cannot be restored by this experimental browser lab.");
     }
     return decoded;
@@ -315,7 +316,8 @@ export default function RealFiberTestnetLab() {
       <div className="two-column">
         <section className="panel">
           <h2>1. Start and stop a dedicated testnet profile</h2>
-          <p><strong>Use cases:</strong> lost browser storage, corrupted local testnet profile, or recovery after a crashed operation. Device-to-device funded-channel migration and single-channel rollback are NOT supported.</p>
+          <p><strong>Use case reviewed by Fiber maintainers:</strong> a browser-based, self-custodial Testnet app needs to recover its <strong>entire stopped node database</strong> after losing the original browser profile. Keep the exported encrypted archive, original Fiber/CKB testnet keys, profile name and RPC configuration outside the affected browser. Device-to-device funded-channel migration and individual-channel rollback are NOT supported.</p>
+          <p><strong>Maintainer workflow:</strong> stop the node → export every IndexedDB record → authenticate the saved archive → restore into an absent or verified-empty database while stopped → restart and inspect. Fiber JS v0.9.1 does not acknowledge completed worker writes on <code>stop()</code>; matching reads are only an experimental zero-channel check, not a guaranteed consistent checkpoint. See <a href="https://github.com/nervosnetwork/fiber/pull/1699" target="_blank" rel="noreferrer">upstream shutdown PR #1699</a> for the proposed fix; use a released, tested implementation before claiming stronger guarantees.</p>
           <label className="field"><span>Unique testnet profile (save with archive)</span><input value={profile} onChange={(e: ChangeEvent<HTMLInputElement>) => setProfile(e.target.value)} disabled={!!host.current || busy} /></label>
           <label className="field"><span>Trusted CKB testnet HTTPS RPC endpoint</span><input value={rpcUrl} onChange={(e: ChangeEvent<HTMLInputElement>) => { setRpcUrl(e.target.value); setRpcCheck(null); }} placeholder="https://your-ckb-testnet-rpc.example" disabled={!!host.current || busy} /></label>
           <button className="ghost full-width" disabled={busy} onClick={() => void run("Checking browser isolation, storage and actual CKB network", async () => {
@@ -497,6 +499,7 @@ export default function RealFiberTestnetLab() {
             schema: "fiber-continuity-testnet-evidence-v0.9", generatedAt: new Date().toISOString(),
             scope: "actual-fiber-js-testnet-zero-channel-experiment", runtime: PINNED_FIBER_VERSION,
             verifiedFundedChannelRecovery: false, verifiedAtomicCheckpoint: false,
+            shutdownGuarantee: "fiber-js-0.9.1-does-not-acknowledge-idb-flush",
             credentialMaterialIncluded: false, operatorMustRunOnRealTestnet: true,
             recoveryStages: { storageReadback: readback, zeroChannelRestart: restartVerified ? "matched" : "not-tested",
               peerChannelSafety: "unverified", paymentInvoiceCoverage: "unavailable", journalStage: readColdJournal(profile)?.stage || "none" },

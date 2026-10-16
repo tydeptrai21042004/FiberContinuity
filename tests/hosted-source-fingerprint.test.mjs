@@ -10,6 +10,6 @@ test('source fingerprint is stable and has a SHA-256 digest', () => {
 });
 test('source fingerprint includes exact hosted-browser export code', () => {
   const code = readFileSync(new URL('../scripts/source-fingerprint.mjs', import.meta.url), 'utf8');
-  assert.match(code, /IndexedDbColdStore\.ts/);
-  assert.match(code, /RealFiberTestnetLab\.tsx/);
+  assert.match(code, /directories = \['src', 'api', 'server', 'scripts'\]/);
+  assert.match(code, /readdirSync/);
 });

@@ -224,7 +224,12 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
     }
     this.fiber = null;
     this.lastSnapshot = observed;
-    if (!observed) this.lossSimulationPermitted = false;
+    // Only fully enumerated, empty channels can remain eligible for this lab.
+    // Fiber JS 0.9.1 does not provide a completed-writes acknowledgement;
+    // this is deliberately NOT a backed-up funded-channel safety proof.
+    if (!observed || observed.capabilities.channels === "unavailable" || observed.channels.length !== 0) {
+      this.lossSimulationPermitted = false;
+    }
     await this.activeRelease?.(); this.activeRelease = null;
     // No pre-stop inspection means no backup or restore authorization.
     if (inspectFailure) throw new Error(`Fiber stopped, but final channel inspection failed; cold backup is BLOCKED: ${String(inspectFailure)}`);
@@ -326,7 +331,10 @@ export class ManagedFiberTestnetHost implements ColdFiberHost {
       }
       await new Promise<void>((resolve, reject) => {
         const req = indexedDB.deleteDatabase(this.databaseName);
-        req.onblocked = () => reject(new Error("Open IndexedDB connection blocks test-profile deletion."));
+        // A blocked delete request cannot be cancelled. Do not reject early:
+        // otherwise the lease may be released while deletion remains queued
+        // and later deletes the profile outside the safety fence.
+        req.onblocked = () => { /* wait for the request to finish under the lease */ };
         req.onerror = () => reject(req.error ?? new Error("IndexedDB deletion failed."));
         req.onsuccess = () => resolve();
       });

@@ -21,6 +21,17 @@ function makeAdapter(node: unknown, channels: unknown) {
 }
 
 describe("FiberJsAdapter inspection safety", () => {
+  it("refuses ambiguous Fiber channel pagination instead of treating it as zero channels", async () => {
+    for (const incomplete of [
+      { channels: [], has_more: "false" },
+      { channels: [], has_more: true },
+      { channels: [], next_cursor: "0x123" },
+      { channels: [], total_count: 1 }
+    ]) {
+      await expect(makeAdapter({ pubkey: "03node" }, incomplete).inspect()).rejects.toThrow(/incomplete|paginated|total/i);
+    }
+  });
+
   it("rejects a missing real node identity instead of manufacturing 'unknown'", async () => {
     const adapter = makeAdapter({}, { channels: [] });
     await expect(adapter.inspect()).rejects.toThrow(/node identity.*missing|invalid/i);

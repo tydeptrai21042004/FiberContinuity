@@ -18,7 +18,9 @@ export function normalizeEvidence(payload) {
     checks.zeroChannelsObserved && checks.workersStopped && checks.encryptedColdBackup &&
     checks.archiveRoundtrip && checks.stoppedDatabaseReadback;
   const fullCyclePassed = checks.disposableProfileDeleted && checks.wholeProfileRestored && checks.zeroChannelRestartVerified;
-  const status = corePassed && (payload.mode === 'non-destructive-smoke' ?
+  const noReportedFailure = payload.failureStage == null && payload.failureCode == null &&
+    payload.failurePhase == null && payload.failureCategory == null;
+  const status = noReportedFailure && corePassed && (payload.mode === 'non-destructive-smoke' ?
     !fullCyclePassed && !checks.disposableProfileDeleted && !checks.wholeProfileRestored && !checks.zeroChannelRestartVerified : fullCyclePassed) ? 'passed' : 'incomplete';
   // Deliberately discard all other fields. NEVER log unreviewed browser payloads.
   return {schema:'fiber-continuity-hosted-evidence-v1', loggedAt:new Date().toISOString(), runId:payload.runId,
@@ -42,7 +44,9 @@ export function normalizeEvidence(payload) {
       'COLD_STORE_HOST_NAME','COLD_STORE_HOST_RELEASE','COLD_STORE_UNKNOWN'
     ].includes(payload.storageFailureReason) ? payload.storageFailureReason : null,
     isolatedZeroChannelRestoreReported:payload.mode === 'disposable-full-cycle' && status === 'passed',
-    fundedChannelRestoreVerified:false, externallyAttested:false};
+    // Real JS 0.9.1 stop() is not an IDB flush acknowledgement (maintainer #41).
+    // Do not upgrade this claim based on repeated snapshot hashes.
+    idbShutdownFlushVerified:false, fundedChannelRestoreVerified:false, externallyAttested:false};
 }
 function authorized(header, secret) {
   if (!secret || secret.length < 24 || typeof header !== 'string') return false;
