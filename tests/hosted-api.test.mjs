@@ -51,7 +51,8 @@ test('partial pagination must never claim a complete balance',async()=>{
   assert.equal(data.indexerStatus,'too-many-cells');
 });
 const report={schema:'fiber-continuity-hosted-evidence-v1',runId:'12345678-test',address:settings.watchedAddress,
-  source:'github-actions-browser', mode:'non-destructive-smoke',checks:{browserReady:true,testnetVerified:true,actualWasmNodeStarted:true,
+  source:'github-actions-browser', mode:'non-destructive-smoke',
+  negativeChecks:{wrongPasswordRejected:true,tamperedArchiveRejected:true,occupiedRestoreRejected:true,interruptedRestartBlocked:true}, checks:{browserReady:true,testnetVerified:true,actualWasmNodeStarted:true,
     zeroChannelsObserved:true,workersStopped:true,encryptedColdBackup:true,archiveRoundtrip:true,
     stoppedDatabaseReadback:true,disposableProfileDeleted:false,wholeProfileRestored:false,
     zeroChannelRestartVerified:false,fundedChannelRecoveryVerified:false}};
@@ -135,4 +136,16 @@ test('a report with contradictory failure fields is never accepted as passed', (
     assert.equal(marked.status, 'incomplete');
     assert.equal(marked.idbShutdownFlushVerified, false);
   }
+});
+
+
+test('full-cycle claims require four real browser negative controls', () => {
+  const base={...report,mode:'disposable-full-cycle',checks:{...report.checks,
+    disposableProfileDeleted:true,wholeProfileRestored:true,zeroChannelRestartVerified:true}};
+  assert.equal(normalizeEvidence(base).status,'passed');
+  for (const name of Object.keys(report.negativeChecks)) {
+    assert.equal(normalizeEvidence({...base,negativeChecks:{...report.negativeChecks,[name]:false}}).status,'incomplete');
+  }
+  assert.equal(normalizeEvidence({...base,negativeChecks:undefined}).status,'incomplete');
+  assert.throws(()=>normalizeEvidence({...base,negativeChecks:{...report.negativeChecks,occupiedRestoreRejected:'true'}}));
 });

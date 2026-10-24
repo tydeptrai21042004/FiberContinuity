@@ -1,0 +1,48 @@
+{
+  "name": "FiberContinuity code-only debt hardening patch",
+  "version": "2026-10-24",
+  "base_archive": "FiberContinuity-main.zip",
+  "workflow_yaml_modified": false,
+  "changed_files": [
+    {
+      "path": "api/evidence.mjs",
+      "sha256": "95e19d8088c711e0306533a1daad0859223309298beb1dbf495a06ef43b4faaa",
+      "action": "modified"
+    },
+    {
+      "path": "docs/TESTNET_EVIDENCE_DEBT_PATCH.md",
+      "sha256": "487e5b65592b23a3ca67a434f5e49384b5aeb53672110b83889e97e8630b2ede",
+      "action": "added"
+    },
+    {
+      "path": "package.json",
+      "sha256": "634b495f5de50708850810784571992fa65748f200b6fb13259665fa543e81c9",
+      "action": "modified"
+    },
+    {
+      "path": "scripts/run-hosted-browser.mjs",
+      "sha256": "4a2dc6e69b42d59970cd3f47a651860f6eef3e39ea3a1319123a1ba44217a262",
+      "action": "modified"
+    },
+    {
+      "path": "scripts/verify-hosted-artifact.mjs",
+      "sha256": "e5a82958ab3f3d9e5df3b48ca9f02f66885b95b5fb5eb7546fa226659046ad83",
+      "action": "added"
+    },
+    {
+      "path": "src/components/RealFiberTestnetLab.tsx",
+      "sha256": "2b07ee6807f6817a041b2becf2e6677003a5f81f8c28dc686a57ffe8ebbcfb95",
+      "action": "modified"
+    },
+    {
+      "path": "tests/hosted-api.test.mjs",
+      "sha256": "eb147be754c11dac45ad203fecf9a873349212179570123e2f25f31673a74663",
+      "action": "modified"
+    },
+    {
+      "path": "tests/verify-hosted-artifact.test.mjs",
+      "sha256": "52777cc19b110aa544690f00299ebb449217b9746b4774ac462dac529c126775",
+      "action": "added"
+    }
+  ]
+}

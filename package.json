@@ -15,8 +15,9 @@
     "test:coverage": "vitest run --coverage",
     "check": "npm run typecheck && vitest run",
     "typecheck": "tsc -b --pretty false",
-    "test:hosted-api": "node --test tests/hosted-api.test.mjs tests/hosted-source-fingerprint.test.mjs",
-    "test:hosted-browser": "node scripts/run-hosted-browser.mjs"
+    "test:hosted-api": "node --test tests/hosted-api.test.mjs tests/hosted-source-fingerprint.test.mjs tests/verify-hosted-artifact.test.mjs",
+    "test:hosted-browser": "node scripts/run-hosted-browser.mjs && node scripts/verify-hosted-artifact.mjs evidence/hosted-browser-evidence.json",
+    "evidence:verify": "node scripts/verify-hosted-artifact.mjs evidence/hosted-browser-evidence.json"
   },
   "dependencies": {
     "@nervosnetwork/fiber-js": "0.9.1",

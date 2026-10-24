@@ -26,6 +26,11 @@ const stageValues = new Set(['deployment', 'browser-navigation', 'browser-test',
 const codeValues = new Set(['DEPLOYMENT_OUTDATED', 'NAVIGATION_FAILED', 'BROWSER_TEST_TIMEOUT',
   'BROWSER_TEST_INCOMPLETE', 'BROWSER_TEST_ERROR', 'EVIDENCE_INGEST_FAILED']);
 const runId = crypto.randomUUID();
+const negativeNames = ['wrongPasswordRejected', 'tamperedArchiveRejected', 'occupiedRestoreRejected', 'interruptedRestartBlocked'];
+const sha = /^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA || '') ? process.env.GITHUB_SHA : null;
+const githubRunId = /^\d{1,20}$/.test(process.env.GITHUB_RUN_ID || '') ? process.env.GITHUB_RUN_ID : null;
+const githubRunAttempt = /^\d{1,6}$/.test(process.env.GITHUB_RUN_ATTEMPT || '') ? Number(process.env.GITHUB_RUN_ATTEMPT) : null;
+const startedAt = new Date().toISOString();
 const diagnosticCategories = new Set([
   'BROWSER_ISOLATION', 'CKB_RPC_CONNECTIVITY', 'FIBER_CONFIG_INVALID',
   'FIBER_WASM_ASSET_OR_WORKER', 'FIBER_WASM_STARTUP', 'BROWSER_STORAGE',
@@ -51,6 +56,9 @@ let report = {
   source: 'github-actions-browser',
   address: settings.watchedAddress, runId, mode: 'disposable-full-cycle',
   checks: Object.fromEntries(checkNames.map(name => [name, false])),
+  negativeChecks: Object.fromEntries(negativeNames.map(name => [name, false])),
+  provenance: { sourceFingerprint: sourceFingerprint(), gitCommit: sha,
+    githubRunId, githubRunAttempt, browserRunId: null, siteOrigin: base, startedAt, completedAt: null },
   failureStage: null, failureCode: null,
   browserDiagnostic: null, browserPhase: null, storageFailureReason: null,
 };
@@ -114,19 +122,25 @@ try {
   if (result.schema !== report.schema || result.address !== report.address || result.mode !== report.mode ||
       result.source !== 'interactive-browser' || typeof result.runId !== 'string' || !result.runId ||
       !result.checks || typeof result.checks !== 'object' || Array.isArray(result.checks) ||
-      result.checks.fundedChannelRecoveryVerified !== false) {
+      result.checks.fundedChannelRecoveryVerified !== false ||
+      !result.negativeChecks || typeof result.negativeChecks !== 'object' ||
+      negativeNames.some(name => typeof result.negativeChecks[name] !== 'boolean') ||
+      checkNames.some(name => typeof result.checks[name] !== 'boolean')) {
     throw Error('BROWSER_TEST_ERROR');
   }
   report = {
     ...report,
     checks: Object.fromEntries(checkNames.map(name => [name, result.checks[name] === true])),
+    negativeChecks: Object.fromEntries(negativeNames.map(name => [name, result.negativeChecks[name] === true])),
+    provenance: { ...report.provenance, browserRunId: result.runId }
   };
   // All positive milestones must be explicit booleans. The v0.9.1 test must
   // never imply that funded-channel recovery or upstream flush was established.
-  failed = requiredChecks.some(name => result.checks[name] !== true);
+  failed = requiredChecks.some(name => result.checks[name] !== true) ||
+    negativeNames.some(name => result.negativeChecks[name] !== true);
   if (result.failurePhase || result.failureCategory) failed = true;
   if (failed) {
-    markFailure(requiredChecks.find(name => !report.checks[name]), 'BROWSER_TEST_INCOMPLETE');
+    markFailure(requiredChecks.find(name => !report.checks[name]) || 'browser-test', 'BROWSER_TEST_INCOMPLETE');
     // Read the operator-facing status, but publish only an allowlisted category.
     // Raw UI error text is NOT exported: it can contain RPC URLs or configuration.
     report.browserDiagnostic = diagnosticCategories.has(result.failureCategory)
@@ -188,6 +202,8 @@ try {
     // Token controls *optional* log delivery, not browser correctness.
     console.warn('EVIDENCE_INGEST_TOKEN not configured: skip Vercel logging. GitHub Actions evidence remains available.');
   }
+  report.provenance.completedAt = new Date().toISOString();
+  report.verdict = failed ? 'incomplete' : 'passed';
   await writeFile('evidence/hosted-browser-evidence.json', JSON.stringify(report, null, 2) + '\n');
   if (failed) process.exitCode = 1;
 }

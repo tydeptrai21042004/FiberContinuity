@@ -27,6 +27,13 @@ type HostedSmokeReport = {
   address: string; runId: string; mode: "non-destructive-smoke" | "disposable-full-cycle";
   failurePhase?: string;
   failureCategory?: HostedFailureCategory;
+  /** Real browser negative controls; passing requires observing explicit refusal. */
+  negativeChecks: {
+    wrongPasswordRejected: boolean;
+    tamperedArchiveRejected: boolean;
+    occupiedRestoreRejected: boolean;
+    interruptedRestartBlocked: boolean;
+  };
   storageFailureReason?: ColdExportFailureReason;
   checks: {
     browserReady: boolean; testnetVerified: boolean; actualWasmNodeStarted: boolean;
@@ -39,7 +46,8 @@ type HostedSmokeReport = {
 };
 function blankReport(source: HostedSmokeReport["source"], mode: HostedSmokeReport["mode"]): HostedSmokeReport {
   return { schema: "fiber-continuity-hosted-evidence-v1", source,
-    address: publicTestnet.watchedAddress, runId: crypto.randomUUID(), mode, checks: {
+    address: publicTestnet.watchedAddress, runId: crypto.randomUUID(), mode,
+    negativeChecks: { wrongPasswordRejected: false, tamperedArchiveRejected: false, occupiedRestoreRejected: false, interruptedRestartBlocked: false }, checks: {
       browserReady: false, testnetVerified: false, actualWasmNodeStarted: false,
       zeroChannelsObserved: false, workersStopped: false, encryptedColdBackup: false,
       archiveRoundtrip: false, stoppedDatabaseReadback: false, disposableProfileDeleted: false,
@@ -196,6 +204,38 @@ export default function RealFiberTestnetLab() {
       const restoredArchive = await decryptArchive(parseArchive(JSON.stringify(encrypted)), passphrase);
       if (restoredArchive.snapshot.nodeId !== started.nodeId) throw new Error("Archive node identity mismatch.");
       report.checks.archiveRoundtrip = true;
+      // Negative controls execute in the REAL browser against this run's genuine
+      // encrypted archive. A rejection counts only for the expected reason.
+      phase = "archive-decryption";
+      try {
+        await decryptArchive(encrypted, `${passphrase}-incorrect`);
+        throw new Error("Unsafe archive authentication: wrong password accepted.");
+      } catch (error) {
+        if (/Unsafe archive authentication/.test(errorMessage(error))) throw error;
+        report.negativeChecks.wrongPasswordRejected = true;
+      }
+      const altered = structuredClone(encrypted);
+      altered.ciphertext = (altered.ciphertext[0] === "A" ? "B" : "A") + altered.ciphertext.slice(1);
+      try {
+        await decryptArchive(parseArchive(JSON.stringify(altered)), passphrase);
+        throw new Error("Unsafe archive authentication: ciphertext tampering accepted.");
+      } catch (error) {
+        if (/Unsafe archive authentication/.test(errorMessage(error))) throw error;
+        report.negativeChecks.tamperedArchiveRejected = true;
+      }
+      // A genuine, populated Fiber database must reject a restore BEFORE any write.
+      // Execute under the same cold lease used by recovery. Do not count unrelated
+      // failures as evidence of an occupancy guard.
+      await h.withColdStore(async store => {
+        if (await store.presence() !== "occupied") throw new Error("Expected a populated test profile before occupied-target negative check.");
+        try {
+          await store.restoreBytes(restoredArchive.nativeBackup);
+          throw new Error("Unsafe occupied target: restore was accepted.");
+        } catch (error) {
+          if (!/Refusing to replace nonempty IndexedDB node state/.test(errorMessage(error))) throw error;
+          report.negativeChecks.occupiedRestoreRejected = true;
+        }
+      });
       phase = "cold-readback";
       await h.verifyRestoredBytes(restoredArchive.nativeBackup);
       report.checks.stoppedDatabaseReadback = true;
@@ -212,6 +252,16 @@ export default function RealFiberTestnetLab() {
           if (await store.presence() !== "absent") throw new Error("Disposable loss did not produce an absent target.");
         });
         beginColdRestore(meta);
+        // The journal MUST block any restart between intentional data loss and
+        // completed authenticated readback; the test executes this refusal against
+        // the actual host, before attempting the recovery write.
+        try {
+          await h.start(true);
+          throw new Error("Unsafe restart: mutating recovery journal was bypassed.");
+        } catch (error) {
+          if (!/Recovery is mutating/.test(errorMessage(error))) throw error;
+          report.negativeChecks.interruptedRestartBlocked = true;
+        }
         phase = "cold-profile-restore";
         await h.withColdStore(store => store.restoreBytes(restoredArchive.nativeBackup));
         await h.verifyRestoredBytes(restoredArchive.nativeBackup);
@@ -302,7 +352,7 @@ export default function RealFiberTestnetLab() {
         <button className="ghost full-width" data-testid="run-hosted-full-cycle" disabled={busy || host.current?.running} onClick={() => void runHostedSmoke("disposable-full-cycle")}>
           Auto-run isolated zero-channel FULL recovery (deletes ONLY newly-created disposable profile)
         </button>
-        <p>Safe smoke: real WASM start → stopped whole-IndexedDB archive → archive serialization/authentication → readback without deletion. Full-cycle test additionally deletes only its own fresh <code>fc-testnet-autosmoke-…</code> database after exact archive comparison, restores it and verifies an explicit restart. Neither path uses the watched wallet, signs transactions or establishes funded-channel safety.</p>
+        <p>Safe smoke: real WASM start → stopped whole-IndexedDB archive → archive serialization/authentication → readback without deletion. Full-cycle test additionally deletes only its own fresh <code>fc-testnet-autosmoke-…</code> database after exact archive comparison, restores it and verifies an explicit restart. The browser also tests wrong passwords, ciphertext tampering, occupied restore refusal and interruption-journal restart refusal. Neither path uses the watched wallet, signs transactions or establishes funded-channel safety.</p>
         <p data-testid="hosted-smoke-status">{logStatus}</p>
         {smokeResult && <>
           <pre data-testid="hosted-smoke-result" style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere"}}>{JSON.stringify(smokeResult, null, 2)}</pre>

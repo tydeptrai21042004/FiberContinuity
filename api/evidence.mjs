@@ -14,6 +14,14 @@ export function normalizeEvidence(payload) {
     checks[key] = payload.checks[key];
   }
   if (checks.fundedChannelRecoveryVerified) throw Error('UNSUPPORTED_FUNDED_RECOVERY_CLAIM');
+  const negativeChecks = {};
+  for (const key of ['wrongPasswordRejected','tamperedArchiveRejected','occupiedRestoreRejected','interruptedRestartBlocked']) {
+    // Old payloads without negative controls remain parseable, but can no longer
+    // establish a passing full recovery on their own.
+    if (payload.negativeChecks?.[key] !== undefined && typeof payload.negativeChecks[key] !== 'boolean') throw Error('INVALID_EVIDENCE');
+    negativeChecks[key] = payload.negativeChecks?.[key] === true;
+  }
+  const negativePassed = Object.values(negativeChecks).every(Boolean);
   const corePassed = checks.browserReady && checks.testnetVerified && checks.actualWasmNodeStarted &&
     checks.zeroChannelsObserved && checks.workersStopped && checks.encryptedColdBackup &&
     checks.archiveRoundtrip && checks.stoppedDatabaseReadback;
@@ -21,11 +29,11 @@ export function normalizeEvidence(payload) {
   const noReportedFailure = payload.failureStage == null && payload.failureCode == null &&
     payload.failurePhase == null && payload.failureCategory == null;
   const status = noReportedFailure && corePassed && (payload.mode === 'non-destructive-smoke' ?
-    !fullCyclePassed && !checks.disposableProfileDeleted && !checks.wholeProfileRestored && !checks.zeroChannelRestartVerified : fullCyclePassed) ? 'passed' : 'incomplete';
+    !fullCyclePassed && !checks.disposableProfileDeleted && !checks.wholeProfileRestored && !checks.zeroChannelRestartVerified : fullCyclePassed && negativePassed) ? 'passed' : 'incomplete';
   // Deliberately discard all other fields. NEVER log unreviewed browser payloads.
   return {schema:'fiber-continuity-hosted-evidence-v1', loggedAt:new Date().toISOString(), runId:payload.runId,
     source:payload.source, address:settings.watchedAddress, scope:payload.mode === 'disposable-full-cycle' ? 'isolated-disposable-zero-channel-full-cycle' : 'non-destructive-zero-channel-browser-smoke',
-    status, checks, failureStage: typeof payload.failureStage === 'string' && [
+    status, checks, negativeChecks, failureStage: typeof payload.failureStage === 'string' && [
       'deployment','browser-navigation','browser-test','evidence-ingest',
       'browserReady','testnetVerified','actualWasmNodeStarted','zeroChannelsObserved','workersStopped',
       'encryptedColdBackup','archiveRoundtrip','stoppedDatabaseReadback','disposableProfileDeleted',
